@@ -1,3 +1,8 @@
+---
+<img width="1169" height="301" alt="image" src="https://github.com/user-attachments/assets/ff45f0e2-d5b8-4064-84d9-bd1d6edf293f" />
+
+---
+
 # Kids-Control
 
 ## 🇩🇪 Deutsch
@@ -66,6 +71,7 @@ und **kein Verhaltensprofiling** statt.
 ---
 
 ---
+
 
 ## 🇬🇧 English
 
