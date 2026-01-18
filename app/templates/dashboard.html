@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <title>KidsControl – Übersicht</title>
+</head>
+<body class="bg">
+  <div class="topbar">
+    <div class="brand">KidsControl</div>
+    <div class="right">
+      <a class="btn ghost" href="/dashboard">Übersicht</a>
+      <a class="btn ghost" href="/schedules">Zeitpläne</a>
+      <a class="btn ghost" href="/audit">Audit</a>
+      <span class="muted">Angemeldet als</span>
+      <span class="pill">{{ user }}</span>
+      <form method="post" action="/logout" style="display:inline;">
+        <button class="btn ghost" type="submit">Logout</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <h2 class="h2">Übersicht</h2>
+    <p class="muted">Sonderaktionen: <b>+60 Minuten</b> oder <b>Heute freigeben</b> (Toggle bis 23:59).</p>
+
+    <div class="grid">
+      {% for c in cards %}
+      <div class="card">
+        <div class="row">
+          <div>
+            <div class="name">{{ c.display_name }}</div>
+            <div class="muted small">@{{ c.username }}</div>
+          </div>
+          <div class="status">
+            {% if c.override %}
+              <div class="pill ok">Freigegeben</div>
+            {% else %}
+              <div class="pill off">Nach Zeitplan</div>
+            {% endif %}
+            <div class="muted small">{{ c.detail }}</div>
+          </div>
+        </div>
+
+        <div class="actions">
+          <form method="post" action="/grant/{{ c.username }}/hour">
+            <button class="btn primary" type="submit">+60 min</button>
+          </form>
+          <form method="post" action="/grant/{{ c.username }}/day">
+            <button class="btn outline" type="submit">
+              {% if c.day_active %}Heute deaktivieren{% else %}Heute freigeben{% endif %}
+            </button>
+          </form>
+          <a class="btn ghost" href="/schedules?user={{ c.username }}">Zeitpläne</a>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</body>
+</html>

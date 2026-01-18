@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <title>KidsControl – Audit</title>
+</head>
+<body class="bg">
+  <div class="topbar">
+    <div class="brand">KidsControl</div>
+    <div class="right">
+      <a class="btn ghost" href="/dashboard">Übersicht</a>
+      <a class="btn ghost" href="/schedules">Zeitpläne</a>
+      <a class="btn ghost" href="/audit">Audit</a>
+      <span class="muted">Angemeldet als</span>
+      <span class="pill">{{ user }}</span>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <h2 class="h2">Audit Log</h2>
+    <p class="muted">Letzte 200 Aktionen.</p>
+
+    <div class="card" style="margin-top:14px;overflow:auto;">
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr class="muted small">
+            <th style="text-align:left;padding:10px;border-bottom:1px solid var(--line);">Zeit</th>
+            <th style="text-align:left;padding:10px;border-bottom:1px solid var(--line);">User</th>
+            <th style="text-align:left;padding:10px;border-bottom:1px solid var(--line);">Kind</th>
+            <th style="text-align:left;padding:10px;border-bottom:1px solid var(--line);">Aktion</th>
+            <th style="text-align:left;padding:10px;border-bottom:1px solid var(--line);">Details</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td style="padding:10px;border-bottom:1px solid var(--line);">{{ r.at }}</td>
+            <td style="padding:10px;border-bottom:1px solid var(--line);">{{ r.actor }}</td>
+            <td style="padding:10px;border-bottom:1px solid var(--line);">{{ r.child }}</td>
+            <td style="padding:10px;border-bottom:1px solid var(--line);">{{ r.action }}</td>
+            <td style="padding:10px;border-bottom:1px solid var(--line);">{{ r.details }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

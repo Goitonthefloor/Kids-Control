@@ -1,0 +1,89 @@
+:root{
+  --bg:#1f2326;
+  --card:#2a2f33;
+  --text:#e8eef2;
+  --muted:#a7b0b7;
+  --mint:#2f8f83;
+  --mint2:#256f66;
+  --line:#3a4248;
+}
+
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial;color:var(--text)}
+.bg{background:linear-gradient(180deg,#1b1f22, var(--bg));min-height:100vh}
+
+.center{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+.title{margin:0 0 4px 0;font-size:28px}
+.h2{margin:14px 0 6px 0}
+.muted{color:var(--muted)}
+.small{font-size:12px}
+
+.form{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+label{font-size:13px;color:var(--muted)}
+input{
+  background:#1b1f22;border:1px solid var(--line);color:var(--text);
+  padding:10px 12px;border-radius:12px;outline:none;
+}
+input:focus{border-color:var(--mint);box-shadow:0 0 0 3px rgba(47,143,131,.15)}
+
+.btn{
+  border:1px solid var(--line);
+  padding:10px 12px;border-radius:12px;background:#1b1f22;color:var(--text);
+  cursor:pointer;transition:.12s transform,.12s opacity,.12s background;
+}
+.btn:hover{transform:translateY(-1px);opacity:.98}
+.btn.primary{background:var(--mint);border-color:var(--mint2)}
+.btn.primary:hover{background:#2aa094}
+.btn.outline{background:transparent;border-color:var(--mint);color:var(--text)}
+.btn.ghost{background:transparent}
+
+.alert{background:rgba(255,255,255,.06);border:1px solid var(--line);padding:10px 12px;border-radius:12px;margin-top:10px}
+
+.pill{display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid var(--line);font-size:12px}
+.pill.ok{border-color:rgba(47,143,131,.7);color:var(--text)}
+.pill.off{opacity:.8}
+.pill{background:rgba(255,255,255,.04)}
+
+.topbar{
+  position:sticky;top:0;z-index:10;
+  background:rgba(31,35,38,.85);backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line);
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 18px;
+}
+.brand{font-weight:700;letter-spacing:.3px}
+.right{display:flex;align-items:center;gap:10px}
+
+.wrap{max-width:1050px;margin:0 auto;padding:18px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-top:14px}
+
+.row{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.name{font-size:18px;font-weight:650}
+.status{text-align:right}
+.actions{display:flex;gap:10px;margin-top:14px}
+.footnote{margin-top:10px}
+select{
+  background:#1b1f22;
+  border:1px solid var(--line);
+  color:var(--text);
+  padding:10px 12px;
+  border-radius:12px;
+  outline:none;
+  appearance:none;
+}
+select:focus{
+  border-color:var(--mint);
+  box-shadow:0 0 0 3px rgba(47,143,131,.15);
+}
+
+/* Einheitliche Breite */
+input, select { width: 100%; }
+
+/* Kleine Tabellen-/Grid-Optik für Schedule */
+.calgrid{
+  display:grid;
+  grid-template-columns:56px 140px 140px 140px;
+  gap:10px;
+  align-items:center;
+}
