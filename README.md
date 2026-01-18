@@ -29,3 +29,9 @@ Siehe `docs/`:
 
 Dieses Repository enthält **keine Secrets**, **keine Datenbank**  
 und **keine produktiven Client-Skripte**.
+
+License: GPL-3.0-or-later
+
+## Ethics & AI Usage
+Kids-Control uses AI-assisted decision logic.
+It does not perform surveillance, content inspection, or behavioral profiling.
