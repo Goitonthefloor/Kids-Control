@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <title>KidsControl – Login</title>
+</head>
+<body class="bg">
+  <div class="center">
+    <div class="card">
+      <h1 class="title">KidsControl</h1>
+      <p class="muted">Eltern-Login (AD-Gruppe <span class="pill">eltern</span>)</p>
+
+      {% if error %}
+        <div class="alert">{{ error }}</div>
+      {% endif %}
+
+      <form method="post" action="/login" class="form">
+        <label>Benutzername (sAMAccountName)</label>
+        <input name="username" placeholder="z.B. gregerr" required />
+
+        <label>Passwort</label>
+        <input type="password" name="password" required />
+
+        <button class="btn primary" type="submit">Anmelden</button>
+      </form>
+
+      <div class="footer muted">
+        <span>Design: Grau + Mint</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
