@@ -1,6 +1,6 @@
 # KidsControl
 
-Server-zentrierte Kindersicherung für Linux-Clients.
+Server-zentrierte Kindersicherung für Linux-Clients. Dieses Profejt mit Hilfe von ChatGPT 5.2 erstellt worden.
 
 ## Projektstatus
 
