@@ -1,54 +1,151 @@
+---
+
+<img width="1169" height="301" alt="image" src="https://github.com/user-attachments/assets/ff45f0e2-d5b8-4064-84d9-bd1d6edf293f" />
+
+---
+
+<img width="1469" height="347" alt="image" src="https://github.com/user-attachments/assets/44e4cd70-dc0e-4d5e-85fd-2b5c6c8da99e" />
+
+---
+
+<img width="1560" height="784" alt="image" src="https://github.com/user-attachments/assets/f2c3fe41-8a28-4224-85c0-f3e946b21a11" />
+
+---
+
+<img width="1538" height="628" alt="image" src="https://github.com/user-attachments/assets/4b2a8a26-9b7a-4fc5-83d2-6805dd5d75d4" />
+
+---
+
+
 # Kids-Control
 
-Kids-Control ist ein Projekt, mit dem die Nutzungszeit von Kinder-PCs verwaltet und begrenzt werden kann. Dieses Repository dient als zentrale Ablage für alles, was im Projekt „Kids Control“ lauffähig erstellt wurde.
+## 🇩🇪 Deutsch
 
-## Ziele des Projekts
+**Server-zentrierte Kindersicherung für Linux-Clients.**  
+Dieses Projekt wurde mit Unterstützung von ChatGPT 5.2 erstellt.
 
-- Nutzungszeiten für einzelne Geräte oder Nutzerprofile verwalten
-- Klarer Überblick über erlaubte Zeitfenster und Restzeiten
-- Einfache Einrichtung und Wartung für Eltern/Administratoren
+---
 
-## Aktueller Stand
+## Projektstatus
 
-- Dieses Repository ist der zentrale Einstiegspunkt für das Projekt.
-- Lauffähige Module und Konfigurationen werden hier gesammelt und dokumentiert.
-- Sobald Komponenten hinzugefügt werden, werden die jeweiligen Start- und Setup-Schritte ergänzt.
+Aktueller Stand: **v0.5 – Server-Baseline**
 
-## Funktionsumfang (aktuell geplant/implementiert)
+Der Server ist stabil, lauffähig und dokumentiert.  
+Client-Implementierungen folgen in späteren Versionen.
 
-- Zeitkontingente pro Tag/Woche
-- Zeitfenster (z. B. nur 17:00–19:00 Uhr)
-- Sperrmodus außerhalb der erlaubten Zeiten
-- Protokollierung der Nutzung
+---
 
-## Geplante Module
+## Leitprinzipien
 
-- **Client-Agent**: Läuft auf dem Kinder-PC und setzt Zeitlimits durch.
-- **Admin-UI**: Oberfläche für Eltern zum Verwalten der Zeitpläne.
-- **Konfigurationsspeicher**: Verwaltung von Profilen, Regeln und Ausnahmen.
-- **Reporting**: Übersicht und Export der Nutzungszeiten.
+- Der Server ist die *Source of Truth*
+- Erklärbarkeit statt Blackbox
+- Kontrolle statt Überwachung
+- Stabilität vor Features
 
-## Repository-Struktur
+---
 
-```text
-Kids-Control/
-├─ README.md
-```
+## Dokumentation
 
-## Installation & Setup
+Siehe das Verzeichnis `docs/`:
 
-Der lauffähige Code wird hier gesammelt und gepflegt. Sobald Module oder Dienste vorhanden sind, werden die genauen Installationsschritte in diesem Abschnitt ergänzt (z. B. Abhängigkeiten, Konfiguration, Startbefehle).
+- ARCHITECTURE.md
+- DATABASE.md
+- SERVER_SETUP.md
+- STATUS_v0.5.md
 
-## Entwicklung
+---
 
-Wenn du neue Module beisteuern möchtest, lege bitte eine kurze Beschreibung im README ab oder erweitere die Struktur um eine passende Dokumentation, damit die Einrichtung nachvollziehbar bleibt.
+## Hinweis
 
-## Roadmap (kurzfristig)
+Dieses Repository enthält **keine Secrets**, **keine Datenbank**  
+und **keine produktiven Client-Skripte**.
 
-- Aufnahme der bestehenden Projektbestandteile in dieses Repository
-- Konkrete Setup-Schritte und Startbefehle ergänzen
-- Erste lauffähige Version dokumentieren
+---
 
-## Lizenz
+## Lizenzierung
 
-Die Lizenz wird ergänzt, sobald die Projektanforderungen final sind.
+Kids-Control wird als **Dual-Licensing-Projekt** bereitgestellt:
+
+- Open Source: **GPL-3.0-or-later**
+- Kommerzielle Lizenzen auf Anfrage verfügbar
+
+Wenn du Kids-Control in einer proprietären, kommerziellen  
+oder gehosteten Umgebung einsetzen möchtest, kontaktiere bitte:
+
+📧 **rolf_greger@web.de**
+
+---
+
+## Ethik & KI-Einsatz
+
+Kids-Control verwendet KI-unterstützte Entscheidungslogik.  
+Es findet **keine Überwachung**, **keine Inhaltsanalyse**  
+und **kein Verhaltensprofiling** statt.
+
+---
+
+---
+
+
+## 🇬🇧 English
+
+**Server-centric parental control system for Linux clients.**  
+This project was created with assistance from ChatGPT 5.2.
+
+---
+
+## Project Status
+
+Current version: **v0.5 – Server Baseline**
+
+The server component is stable, operational, and documented.  
+Client implementations will follow in later versions.
+
+---
+
+## Core Principles
+
+- The server is the *source of truth*
+- Explainability over black-box behavior
+- Control instead of surveillance
+- Stability before features
+
+---
+
+## Documentation
+
+See the `docs/` directory:
+
+- ARCHITECTURE.md
+- DATABASE.md
+- SERVER_SETUP.md
+- STATUS_v0.5.md
+
+---
+
+## Notice
+
+This repository contains **no secrets**, **no databases**,  
+and **no production-ready client scripts**.
+
+---
+
+## Licensing
+
+Kids-Control is provided under a **dual licensing model**:
+
+- Open Source: **GPL-3.0-or-later**
+- Commercial licenses available upon request
+
+If you intend to use Kids-Control in a proprietary, commercial,  
+or hosted environment, please contact:
+
+📧 **rolf_greger@web.de**
+
+---
+
+## Ethics & AI Usage
+
+Kids-Control uses AI-assisted decision logic.  
+It does **not** perform surveillance, content inspection,  
+or behavioral profiling.

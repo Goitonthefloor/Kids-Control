@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <title>KidsControl – Zeitpläne</title>
+</head>
+<body class="bg">
+  <div class="topbar">
+    <div class="brand">KidsControl</div>
+    <div class="right">
+      <a class="btn ghost" href="/dashboard">Übersicht</a>
+      <a class="btn ghost" href="/schedules">Zeitpläne</a>
+      <span class="muted">Angemeldet als</span>
+      <span class="pill">{{ user }}</span>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <h2 class="h2">Zeitpläne</h2>
+    <p class="muted">7-Tage Kalender pro Kind. Sonderaktionen übersteuern den Zeitplan.</p>
+
+    {% if error %}
+      <div class="alert">{{ error }}</div>
+    {% endif %}
+
+    <form method="get" action="/schedules" class="card" style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <label class="muted small">Gruppe</label>
+      <select name="group">
+        {% for g in groups %}
+          <option value="{{ g }}" {% if g == group %}selected{% endif %}>{{ g }}</option>
+        {% endfor %}
+      </select>
+
+      <label class="muted small">Kind</label>
+      <select name="user">
+        {% for c in children %}
+          <option value="{{ c.username }}" {% if c.username == selected %}selected{% endif %}>{{ c.display_name }} (@{{ c.username }})</option>
+        {% endfor %}
+      </select>
+
+      <button class="btn outline" type="submit">Laden</button>
+    </form>
+   <form method="post" action="/schedules?group={{ group }}" class="card" style="margin-top:14px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+  <input type="hidden" name="user" value="{{ selected }}" />
+
+  <div style="min-width:180px;">
+    <label class="muted small">Preset</label>
+    <select name="preset">
+      <option value="">(kein)</option>
+      <option value="schule">Schule</option>
+      <option value="wochenende">Wochenende</option>
+      <option value="ferien">Ferien</option>
+    </select>
+  </div>
+
+  <div style="width:140px;">
+    <label class="muted small">Start</label>
+    <input name="qa_start" placeholder="15:00" />
+  </div>
+
+  <div style="width:140px;">
+    <label class="muted small">Ende</label>
+    <input name="qa_end" placeholder="18:30" />
+  </div>
+
+  <div style="width:140px;">
+    <label class="muted small">Min/Tag</label>
+    <input name="qa_minutes" placeholder="120" />
+  </div>
+
+  <button class="btn outline" name="apply_all" value="1" type="submit">Auf alle Tage anwenden</button>
+</form>
+
+    <form method="post" action="/schedules?group={{ group }}" class="card" style="margin-top:14px;">
+      <input type="hidden" name="user" value="{{ selected }}" />
+
+      <div class="calgrid">
+>
+        <div class="muted small">Tag</div>
+        <div class="muted small">Start (HH:MM)</div>
+        <div class="muted small">Ende (HH:MM)</div>
+        <div class="muted small">Minuten/Tag</div>
+
+        {% for r in rows %}
+          <div><b>{{ r.label }}</b></div>
+          <div><input name="start_{{ r.weekday }}" value="{{ r.start }}" /></div>
+          <div><input name="end_{{ r.weekday }}" value="{{ r.end }}" /></div>
+          <div><input name="minutes_{{ r.weekday }}" value="{{ r.minutes }}" /></div>
+        {% endfor %}
+      </div>
+
+      <div style="margin-top:14px;display:flex;gap:10px;">
+        <button class="btn primary" type="submit">Speichern</button>
+        <a class="btn ghost" href="/dashboard">Zurück</a>
+      </div>
+    </form>
+  </div>
+</body>
+</html>

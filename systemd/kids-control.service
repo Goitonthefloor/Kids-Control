@@ -1,0 +1,38 @@
+[Unit]
+Description=KidsControl API (FastAPI/Uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Wichtig: nicht als root laufen lassen
+User=<your-admin-user>
+Group=<your-admin-user>
+
+WorkingDirectory=/opt/kids-control
+
+# Optional: Umgebungsvariablen zentral verwalten
+EnvironmentFile=-/opt/kids-control/.env
+
+# venv + Startkommando (passe app.main:app an, falls dein Einstieg anders heißt)
+ExecStart=/opt/kids-control/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+Restart=on-failure
+RestartSec=3
+
+# Security Hardening (konservativ, sollte i.d.R. funktionieren)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/kids-control/app/data
+LockPersonality=true
+RestrictRealtime=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
