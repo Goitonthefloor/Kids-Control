@@ -1,0 +1,12 @@
+# KidsControl example environment
+# Copy to /opt/kids-control/.env on server
+
+# SQLite default (v0.5)
+DATABASE_URL=sqlite:////opt/kids-control/app/data/kidscontrol.sqlite3
+
+# API
+HOST=0.0.0.0
+PORT=8000
+
+# Optional: future auth / tokens (leave empty for v0.5)
+# API_TOKEN=
