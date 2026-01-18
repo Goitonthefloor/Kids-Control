@@ -1,11 +1,3 @@
-diff --git a/app/main.py b/app/main.py
-index 9c49a4a085af94c313c95dab6c4e298553601436..3f9729e14aa9f995998c1eb969c658eea2593d9c 100644
---- a/app/main.py
-+++ b/app/main.py
-@@ -9,89 +9,120 @@ Umsetzung:
- 5) Code aufgeräumt: Policy/Format/UI in Module ausgelagert
- """
- 
  from fastapi import FastAPI, Request, Form
  from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
  from starlette.middleware.sessions import SessionMiddleware
