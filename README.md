@@ -1,7 +1,21 @@
 ---
+
 <img width="1169" height="301" alt="image" src="https://github.com/user-attachments/assets/ff45f0e2-d5b8-4064-84d9-bd1d6edf293f" />
 
 ---
+
+<img width="1469" height="347" alt="image" src="https://github.com/user-attachments/assets/44e4cd70-dc0e-4d5e-85fd-2b5c6c8da99e" />
+
+---
+
+<img width="1560" height="784" alt="image" src="https://github.com/user-attachments/assets/f2c3fe41-8a28-4224-85c0-f3e946b21a11" />
+
+---
+
+<img width="1538" height="628" alt="image" src="https://github.com/user-attachments/assets/4b2a8a26-9b7a-4fc5-83d2-6805dd5d75d4" />
+
+---
+
 
 # Kids-Control
 
