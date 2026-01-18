@@ -31,6 +31,7 @@ from app.db import (
 from app.policy import compute_access, as_aware_utc
 from app.ui import (
     css_block,
+    REASON_MAP_DE,
     render_login_page,
     render_dashboard,
     render_trace,
@@ -52,6 +53,7 @@ ADMIN_USER = os.getenv("KIDSCONTROL_ADMIN_USER", "administrator")
 ADMIN_PASSWORD = os.getenv("KIDSCONTROL_ADMIN_PASSWORD", "")
 
 CHILD_VIEW_TOKEN = os.getenv("KIDSCONTROL_CHILD_VIEW_TOKEN", "")
+WIDGET_TOKEN = os.getenv("KIDSCONTROL_WIDGET_TOKEN", "")
 
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key=SECRET)
@@ -68,6 +70,35 @@ def require_admin(request: Request):
     if not u or u != ADMIN_USER:
         return RedirectResponse("/login", status_code=302)
     return None
+
+
+def _widget_remaining_minutes(state: dict) -> int | None:
+    candidates = []
+    for key in ("minutes_left_window", "daily_remaining"):
+        value = state.get(key)
+        if isinstance(value, int):
+            candidates.append(value)
+    if not candidates:
+        return None
+    return max(0, min(candidates))
+
+
+def _widget_remaining_label(state: dict) -> str | None:
+    reason = state.get("reason", "")
+    if reason == "override-day":
+        return "Unbegrenzt"
+    if reason == "override":
+        return str(state.get("override_text") or "Sonderfreigabe")
+    remaining = _widget_remaining_minutes(state)
+    if remaining is None:
+        return None
+    return f"Noch {remaining} Min"
+
+
+def _widget_reason_label(reason: str) -> str:
+    if not reason:
+        return ""
+    return REASON_MAP_DE.get(reason, reason)
 
 
 @app.on_event("startup")
@@ -166,6 +197,37 @@ def api_admin_reset_daily(request: Request, user: str):
         db.query(DailyUsage).filter_by(username=user, day=day).delete(synchronize_session=False)
         db.commit()
         return JSONResponse({"ok": True, "user": user, "day": day})
+    finally:
+        db.close()
+
+
+@app.get("/api/widget/status")
+def api_widget_status(t: str | None = None):
+    if WIDGET_TOKEN and t != WIDGET_TOKEN:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    db = SessionLocal()
+    try:
+        kids = db.query(Child).order_by(Child.username.asc()).all()
+        payload = []
+        for k in kids:
+            state = compute_access(db, user=k.username, tz=TZ, include_debug=False)
+            payload.append(
+                {
+                    "username": k.username,
+                    "display_name": k.display_name or k.username,
+                    "allow": bool(state.get("allow")),
+                    "reason": state.get("reason", ""),
+                    "reason_label": _widget_reason_label(state.get("reason", "")),
+                    "warn": bool(state.get("warn", False)),
+                    "remaining_minutes": _widget_remaining_minutes(state),
+                    "remaining_label": _widget_remaining_label(state),
+                    "daily_remaining": state.get("daily_remaining"),
+                    "daily_limit": state.get("daily_limit"),
+                    "minutes_left_window": state.get("minutes_left_window"),
+                    "override_text": state.get("override_text"),
+                }
+            )
+        return JSONResponse({"server_time": now_local().isoformat(), "kids": payload})
     finally:
         db.close()
 
