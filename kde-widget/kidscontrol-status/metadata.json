@@ -1,0 +1,14 @@
+{
+  "KPlugin": {
+    "Id": "kidscontrol.status",
+    "Name": "KidsControl Status",
+    "Description": "Zeigt Status und Restzeit pro Kind aus Kids-Control",
+    "Version": "1.0.0",
+    "License": "GPL-3.0-or-later",
+    "Icon": "preferences-system-time"
+  },
+  "X-Plasma-API": "declarativeappletscript",
+  "X-Plasma-MainScript": "ui/main.qml",
+  "X-KDE-FormFactors": ["desktop", "tablet", "handset"],
+  "X-KDE-ParentApp": "org.kde.plasma"
+}
