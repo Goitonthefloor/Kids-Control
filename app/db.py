@@ -8,6 +8,19 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 Base = declarative_base()
 
+class User(Base):
+    """User accounts for authentication (admins and parents)."""
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+    username = Column(String, unique=True, nullable=False)
+    display_name = Column(String, nullable=False)
+    password_hash = Column(String, nullable=False)
+    password_salt = Column(String, nullable=False)
+    is_admin = Column(Boolean, nullable=False, default=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    last_login = Column(DateTime(timezone=True), nullable=True)
+
 class Child(Base):
     __tablename__ = "children"
     id = Column(Integer, primary_key=True)
@@ -83,6 +96,7 @@ class DailyUsage(Base):
     __table_args__ = (
         UniqueConstraint("username", "day", name="uq_daily_usage_user_day"),
     )
+
 class DayOverride(Base):
     __tablename__ = "day_overrides"
     username = Column(String, primary_key=True)
@@ -91,4 +105,13 @@ class DayOverride(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
 def init_db():
+    """Initialize database and create initial admin account."""
     Base.metadata.create_all(bind=engine)
+    
+    # Create initial admin if no users exist
+    from app.auth import create_initial_admin
+    db = SessionLocal()
+    try:
+        create_initial_admin(db)
+    finally:
+        db.close()
