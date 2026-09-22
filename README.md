@@ -10,6 +10,8 @@ Deutsch unten. English follows.
 
 Die Web-Oberfläche gibt es auf Deutsch und Englisch (Schalter **DE / EN**).
 
+![Dashboard mit Kind, Status und Schnellaktionen](docs/images/dashboard-de.png)
+
 ## Was KidsControl macht
 
 1. **Eltern-Hub (Server)** – Web-UI und API, einzige Quelle der Wahrheit
@@ -56,6 +58,8 @@ Linux und macOS: `./setup-server.sh` (macOS auch per Doppelklick auf `setup-serv
 
 Das Skript legt die virtuelle Umgebung an, installiert die Abhängigkeiten, startet den Hub auf Port 8000 und öffnet den Browser. Beim ersten Start die Einrichtung im Browser abschließen (Eltern-Passwort und Client-Setup-Passwort). Danach den Prozess neu starten, damit `data/server.env` gilt.
 
+![Erste Einrichtung des Servers im Browser](docs/images/setup-de.png)
+
 Manuell, falls kein Doppelklick möglich ist:
 
 ```bash
@@ -80,6 +84,8 @@ Es gibt zwei Server-Passwörter:
 3. Auf dem Kinder-PC ausführen:
    - Linux und macOS: `bash kidscontrol-setup.sh` (macOS-Datei: `kidscontrol-setup.command`)
    - Windows: `kidscontrol-setup.cmd` doppelklicken
+
+![Kind-Seite mit Befehl und One-Click-Downloads für Linux, macOS und Windows](docs/images/child-oneclick-de.png)
 
 Das Skript installiert Python 3, falls es fehlt, lädt den Agenten vom Hub und richtet ihn ein. Unter Linux als root wird zusätzlich der Dienst `kidscontrol-agent` aktiviert. OpenSSH kommt über apt, dnf oder pacman, der SSH-Schlüssel wird erzeugt und der private Teil an den Server übertragen. Danach steht das Gerät in der Eltern-UI.
 
@@ -108,6 +114,8 @@ python -m kidscontrol_agent.setup --server http://IP-DES-SERVERS:8000 --token CO
 **Central place** for parents to control screen time and block apps on children's PCs, **independent of the operating system** (Windows, macOS, Linux).
 
 The web UI is available in German and English (switch **DE / EN**).
+
+![Dashboard with a child, status, and quick actions](docs/images/dashboard-en.png)
 
 ## What KidsControl does
 
@@ -155,6 +163,8 @@ Linux and macOS: `./setup-server.sh` (on macOS, double-click `setup-server.comma
 
 The script creates the virtualenv, installs dependencies, starts the hub on port 8000, and opens a browser. On the first start, finish setup in the browser (parent password and client setup password). Restart the process afterwards so `data/server.env` is picked up.
 
+![First-time server setup in the browser](docs/images/setup-en.png)
+
 Manual start, if a double-click is not possible:
 
 ```bash
@@ -179,6 +189,8 @@ Two server passwords:
 3. On the child PC:
    - Linux and macOS: `bash kidscontrol-setup.sh` (macOS file: `kidscontrol-setup.command`)
    - Windows: double-click `kidscontrol-setup.cmd`
+
+![Child page with the command and one-click downloads for Linux, macOS, and Windows](docs/images/child-oneclick-en.png)
 
 The script installs Python 3 when it is missing, downloads the agent from the hub, and enrolls the PC. On Linux as root it also enables the `kidscontrol-agent` service. OpenSSH is installed with apt, dnf, or pacman; the SSH key is created and the private key is sent to the server. The device then shows up in the parent UI.
 
