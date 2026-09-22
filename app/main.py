@@ -9,12 +9,14 @@ from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
 from zoneinfo import ZoneInfo
 
 from app import config
+from app import __version__
 from app.i18n import t
+from app.oneclick import agent_archive, client_installer
 from app.db import (
     AppRule,
     AuditLog,
@@ -50,7 +52,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="KidsControl", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="KidsControl", version=__version__, lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=config.SECRET)
 
 
@@ -169,7 +171,7 @@ def default_schedules_for(child_id: int) -> list[Schedule]:
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "service": "kidscontrol", "version": "1.0.0", "configured": config.is_configured()}
+    return {"ok": True, "service": "kidscontrol", "version": __version__, "configured": config.is_configured()}
 
 
 @app.get("/setup")
@@ -444,6 +446,52 @@ def child_page(request: Request, slug: str):
         )
     finally:
         db.close()
+
+
+@app.get("/ui/child/{slug}/oneclick/{platform}")
+def oneclick_installer(request: Request, slug: str, platform: str):
+    denied = require_admin(request)
+    if denied:
+        return denied
+    if platform not in {"linux", "macos", "windows"}:
+        return HTMLResponse("Unbekannte Plattform", status_code=404)
+    db = SessionLocal()
+    try:
+        child = get_child_by_slug(db, slug)
+        if not child:
+            return HTMLResponse("Kind nicht gefunden", status_code=404)
+        if not child.enroll_token:
+            child.enroll_token = secrets.token_urlsafe(18)
+            db.commit()
+        token = child.enroll_token
+    finally:
+        db.close()
+    filename, media, body = client_installer(platform, server=public_base(request), token=token)
+    return Response(
+        content=body,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/setup/agent.tgz")
+def setup_agent_tgz():
+    body = agent_archive("tgz")
+    return Response(
+        content=body,
+        media_type="application/gzip",
+        headers={"Content-Disposition": 'attachment; filename="kidscontrol-agent.tgz"'},
+    )
+
+
+@app.get("/setup/agent.zip")
+def setup_agent_zip():
+    body = agent_archive("zip")
+    return Response(
+        content=body,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="kidscontrol-agent.zip"'},
+    )
 
 
 @app.post("/ui/child/{slug}/settings")

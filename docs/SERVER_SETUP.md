@@ -1,6 +1,6 @@
 # KidsControl – Server Setup
 
-Version: v1.1
+Version: v1.2.0
 
 ## Voraussetzungen
 
@@ -8,6 +8,12 @@ Siehe README, Abschnitt Systemvoraussetzungen.
 
 - Python 3.10+
 - Port 8000 (oder ein anderer freier TCP-Port) im Heimnetz erreichbar
+
+## One-Click
+
+Linux und macOS: `./setup-server.sh`. macOS zusätzlich: `setup-server.command` doppelklicken. Windows: `setup-server.cmd` doppelklicken.
+
+Das Skript erzeugt `.venv`, installiert `requirements.txt`, startet uvicorn auf Port 8000 und öffnet den Browser. Die erste Seite ist `/setup`. Nach dem Speichern den Prozess neu starten.
 
 ## Einrichtung
 
