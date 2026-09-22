@@ -6,14 +6,25 @@ Der Agent läuft auf dem Kinder-PC und holt Regeln vom zentralen Server.
 
 ## Einrichtung
 
-Voraussetzung: Auf dem Server ist ein Kind angelegt, und du kennst das **Client-Setup-Passwort** aus `python -m app.setup` (nicht das Eltern-Login).
+Nach dem Anlegen eines Kindes zeigt die Eltern-UI einen Befehl. Auf dem Kinder-PC:
 
 ```bash
 cd client
-python -m kidscontrol_agent.setup
+python -m kidscontrol_agent.setup --server http://SERVER:8000 --token CODE
 ```
 
-Der Setup fragt Server-Adresse, Setup-Passwort, Kind und Gerätename. Er legt am Server ein Gerät an und schreibt `client.env` mit dem Device-Key.
+Der Code steht nur auf der Kind-Seite. Unter Linux installiert das Setup OpenSSH (`apt-get`, `dnf` oder `pacman`), erzeugt `~/.config/kidscontrol/ssh/id_ed25519`, trägt den öffentlichen Schlüssel in `~/.ssh/authorized_keys` ein und sendet den privaten Schlüssel an den Server. Der Server speichert ihn unter `data/keys/` und schaltet SSH für das Linux-Gerät an.
+
+## Setup
+
+After you add a child, the parent UI shows one command. On the child PC:
+
+```bash
+cd client
+python -m kidscontrol_agent.setup --server http://SERVER:8000 --token CODE
+```
+
+On Linux this installs OpenSSH, creates an SSH key, and uploads the private key to the controller.
 
 Linux als Dienst:
 

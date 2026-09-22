@@ -1,12 +1,10 @@
-"""Server-rendered parent UI (German)."""
+"""Server-rendered parent UI (German and English)."""
 
 from __future__ import annotations
 
 from html import escape
 
-from app.policy import REASON_LABELS_DE
-
-WEEKDAYS_DE = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
+from app.i18n import preset_label, reason_label, t, weekday
 
 
 def css() -> str:
@@ -101,12 +99,13 @@ def _pill(label: str, value: str, *, mint: bool = False, danger: bool = False) -
     return f'<span class="{cls}"><b>{escape(label)}:</b>&nbsp;{escape(value)}</span>'
 
 
-def _shell(title: str, subtitle: str, body: str, *, nav: str = "", flash: str | None = None) -> str:
+def _shell(title: str, subtitle: str, body: str, *, nav: str = "", flash: str | None = None, lang: str = "de") -> str:
     flash_html = ""
     if flash:
         flash_html = f'<div class="flash">{escape(flash)}</div>'
+    langs = '<a href="/lang/de">DE</a><a href="/lang/en">EN</a>'
     return f"""<!doctype html>
-<html lang="de">
+<html lang="{escape(lang)}">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -121,7 +120,7 @@ def _shell(title: str, subtitle: str, body: str, *, nav: str = "", flash: str | 
           <h1>{escape(title)}</h1>
           <small>{escape(subtitle)}</small>
         </div>
-        <div class="nav">{nav}</div>
+        <div class="nav">{langs}{nav}</div>
       </div>
       {flash_html}
       {body}
@@ -131,102 +130,101 @@ def _shell(title: str, subtitle: str, body: str, *, nav: str = "", flash: str | 
 </html>"""
 
 
-def render_setup(error: str | None = None) -> str:
+def render_setup(error: str | None = None, lang: str = "de") -> str:
     err = f'<div class="flash err">{escape(error)}</div>' if error else ""
     body = f"""
 <div class="grid" style="max-width:760px;margin-top:14px">
   <div class="card">
-    <h2 style="margin:0 0 8px 0;font-size:18px">Server einrichten</h2>
-    <p class="small">Lege das Eltern-Login und ein separates Client-Setup-Passwort fest. Das Setup-Passwort wird später auf jedem Kinder-PC abgefragt und richtet den Agenten ein. Es öffnet nicht die Eltern-Oberfläche.</p>
+    <h2 style="margin:0 0 8px 0;font-size:18px">{escape(t(lang, "setup_title"))}</h2>
+    <p class="small">{escape(t(lang, "setup_intro"))}</p>
     {err}
     <form method="post" action="/setup" style="margin-top:12px;display:grid;gap:10px">
       <div>
-        <div class="small">Eltern-Benutzername</div>
+        <div class="small">{escape(t(lang, "admin_user"))}</div>
         <input name="admin_user" value="admin" required autocomplete="username"/>
       </div>
       <div>
-        <div class="small">Eltern-Passwort (mind. 8 Zeichen)</div>
+        <div class="small">{escape(t(lang, "admin_password"))}</div>
         <input name="admin_password" type="password" required autocomplete="new-password"/>
       </div>
       <div>
-        <div class="small">Eltern-Passwort wiederholen</div>
+        <div class="small">{escape(t(lang, "admin_password_repeat"))}</div>
         <input name="admin_password_repeat" type="password" required autocomplete="new-password"/>
       </div>
       <div>
-        <div class="small">Client-Setup-Passwort (mind. 8 Zeichen, anderes Passwort)</div>
+        <div class="small">{escape(t(lang, "setup_password"))}</div>
         <input name="setup_password" type="password" required autocomplete="new-password"/>
       </div>
       <div>
-        <div class="small">Client-Setup-Passwort wiederholen</div>
+        <div class="small">{escape(t(lang, "setup_password_repeat"))}</div>
         <input name="setup_password_repeat" type="password" required autocomplete="new-password"/>
       </div>
       <div>
-        <div class="small">Zeitzone</div>
+        <div class="small">{escape(t(lang, "timezone"))}</div>
         <input name="timezone" value="Europe/Berlin"/>
       </div>
-      <button class="btn" type="submit">Server einrichten</button>
+      <button class="btn" type="submit">{escape(t(lang, "setup_submit"))}</button>
     </form>
   </div>
 </div>"""
-    return _shell("KidsControl", "Erste Einrichtung", body, nav="")
+    return _shell("KidsControl", t(lang, "setup_sub"), body, nav="", lang=lang)
 
 
-def render_setup_done() -> str:
-    body = """
+def render_setup_done(lang: str = "de") -> str:
+    body = f"""
 <div class="grid" style="max-width:760px;margin-top:14px">
   <div class="card">
-    <h2 style="margin:0 0 8px 0;font-size:18px">Einrichtung gespeichert</h2>
-    <p>Starte den Server neu, damit das Sitzungsgeheimnis aus der Konfiguration geladen wird. Danach kannst du dich mit dem Eltern-Passwort anmelden.</p>
-    <p class="small">Auf den Kinder-PCs: <code>python -m kidscontrol_agent.setup</code> und das Client-Setup-Passwort eingeben. Vorher ein Kind in der Eltern-UI anlegen.</p>
+    <h2 style="margin:0 0 8px 0;font-size:18px">{escape(t(lang, "setup_done_title"))}</h2>
+    <p>{escape(t(lang, "setup_done_body"))}</p>
+    <p class="small">{escape(t(lang, "setup_done_hint"))}</p>
   </div>
 </div>"""
-    return _shell("KidsControl", "Neu starten", body, nav="")
+    return _shell("KidsControl", t(lang, "setup_done_sub"), body, nav="", lang=lang)
 
 
-def render_login(admin_user: str, error: str | None = None) -> str:
+def render_login(admin_user: str, error: str | None = None, lang: str = "de") -> str:
     err = f'<div class="flash err">{escape(error)}</div>' if error else ""
     body = f"""
 <div class="grid" style="max-width:720px;margin-top:14px">
   <div class="card">
-    <h2 style="margin:0 0 8px 0;font-size:18px">Eltern-Login</h2>
-    <p class="small">Zentraler Hub für Nutzungszeit und App-Sperren – unabhängig vom Betriebssystem der Kinder-PCs.</p>
+    <h2 style="margin:0 0 8px 0;font-size:18px">{escape(t(lang, "login_title"))}</h2>
+    <p class="small">{escape(t(lang, "login_intro"))}</p>
     {err}
     <form method="post" action="/login" style="margin-top:12px;display:grid;gap:10px">
       <div>
-        <div class="small">Benutzername</div>
+        <div class="small">{escape(t(lang, "username"))}</div>
         <input name="username" value="{escape(admin_user)}" required/>
       </div>
       <div>
-        <div class="small">Passwort</div>
+        <div class="small">{escape(t(lang, "password"))}</div>
         <input name="password" type="password" required/>
       </div>
-      <button class="btn" type="submit">Anmelden</button>
+      <button class="btn" type="submit">{escape(t(lang, "sign_in"))}</button>
     </form>
   </div>
 </div>"""
-    return _shell("KidsControl", "Anmelden", body, nav="")
+    return _shell("KidsControl", t(lang, "login_sub"), body, nav="", lang=lang)
 
 
-def render_dashboard(now_iso: str, kids: list[dict], flash: str | None = None) -> str:
+def render_dashboard(now_iso: str, kids: list[dict], flash: str | None = None, lang: str = "de") -> str:
     rows = ""
     for k in kids:
         st = k.get("state") or {}
         allow = bool(st.get("allow"))
         reason = st.get("reason", "")
-        reason_de = REASON_LABELS_DE.get(reason, reason)
-        pills = [_pill("Grund", reason_de, mint=True)]
+        pills = [_pill(t(lang, "reason"), reason_label(lang, reason), mint=True)]
         if st.get("remaining_minutes") is not None:
-            pills.append(_pill("Rest", f'{st["remaining_minutes"]} Min', mint=True))
+            pills.append(_pill(t(lang, "remaining"), t(lang, "minutes", n=st["remaining_minutes"]), mint=True))
         if st.get("daily_remaining") is not None and st.get("daily_limit") is not None:
-            pills.append(_pill("Tagesbudget", f'{st["daily_remaining"]}/{st["daily_limit"]} Min'))
+            pills.append(_pill(t(lang, "daily_budget"), f'{st["daily_remaining"]}/{st["daily_limit"]}'))
         blocked_n = int(k.get("blocked_app_count") or 0)
         if blocked_n:
-            pills.append(_pill("App-Sperren", str(blocked_n), danger=True))
+            pills.append(_pill(t(lang, "app_blocks"), str(blocked_n), danger=True))
         devices = k.get("devices") or []
         if devices:
-            pills.append(_pill("Geräte", ", ".join(d["name"] for d in devices)))
+            pills.append(_pill(t(lang, "devices"), ", ".join(d["name"] for d in devices)))
         else:
-            pills.append(_pill("Geräte", "keines", danger=True))
+            pills.append(_pill(t(lang, "devices"), t(lang, "none"), danger=True))
 
         slug = escape(k["slug"])
         day_on = reason == "override-day"
@@ -237,33 +235,41 @@ def render_dashboard(now_iso: str, kids: list[dict], flash: str | None = None) -
     <div class="kiduser">{slug}</div>
   </div>
   <div>
-    <div class="big">{"✅ Erlaubt" if allow else "⛔ Gesperrt"}{" ⚠️" if st.get("warn") else ""}</div>
+    <div class="big">{"✅ " + escape(t(lang, "allowed")) if allow else "⛔ " + escape(t(lang, "blocked"))}{" ⚠️" if st.get("warn") else ""}</div>
     <div class="meta">{"".join(pills)}</div>
   </div>
   <div class="actions">
-    <a class="link" href="/ui/child/{slug}">Verwalten</a>
+    <a class="link" href="/ui/child/{slug}">{escape(t(lang, "manage"))}</a>
     <form method="post" action="/ui/grant/{slug}/hour"><button class="btn" {"disabled" if day_on else ""}>+1h</button></form>
-    <form method="post" action="/ui/grant/{slug}/day"><button class="btn">{"Unbegrenzt aus" if day_on else "Heute unbegrenzt"}</button></form>
+    <form method="post" action="/ui/grant/{slug}/day"><button class="btn">{escape(t(lang, "unlimited_off") if day_on else t(lang, "unlimited_today"))}</button></form>
   </div>
 </div>"""
 
     if not rows:
-        rows = '<div class="card"><p class="small">Noch keine Kinder angelegt.</p></div>'
+        rows = f'<div class="card"><p class="small">{escape(t(lang, "no_children"))}</p></div>'
 
-    add_form = """
+    add_form = f"""
 <div class="card">
-  <h2 style="margin:0 0 10px 0;font-size:16px">Kind hinzufügen</h2>
-  <form method="post" action="/ui/children/add" class="two">
-    <div><div class="small">Anzeigename</div><input name="display_name" placeholder="z.B. Mia" required/></div>
-    <div><div class="small">Kurz-ID (slug)</div><input name="slug" placeholder="z.B. mia" required pattern="[a-z0-9_\\-]{2,32}"/></div>
-    <div style="grid-column:1/-1"><button class="btn" type="submit">Anlegen</button></div>
+  <h2 style="margin:0 0 10px 0;font-size:16px">{escape(t(lang, "add_child"))}</h2>
+  <form method="post" action="/ui/children/add">
+    <div class="small">{escape(t(lang, "display_name"))}</div>
+    <input name="display_name" placeholder="{escape(t(lang, "display_name_ph"))}" required/>
+    <div style="margin-top:10px"><button class="btn" type="submit">{escape(t(lang, "create"))}</button></div>
   </form>
-  <p class="small" style="margin-top:10px">Die Kurz-ID erscheint in der Agent-Konfiguration und darf später nicht geändert werden.</p>
+  <p class="small" style="margin-top:10px">{escape(t(lang, "add_child_hint"))}</p>
 </div>"""
 
-    nav = '<a href="/dashboard">Dashboard</a><a href="/ui/audit">Protokoll</a><a href="/logout">Logout</a>'
-    body = f'<div class="grid">{rows}{add_form}</div><p class="small" style="margin-top:12px">Entscheidungsreihenfolge: Tages-Override → Stunden-Override → Zeitfenster → Tagesbudget. App-Sperren gelten zusätzlich während erlaubter Zeit.</p>'
-    return _shell("KidsControl", f"Serverzeit {now_iso}", body, nav=nav, flash=flash)
+    nav = f'<a href="/dashboard">{escape(t(lang, "dashboard"))}</a><a href="/ui/audit">{escape(t(lang, "audit"))}</a><a href="/logout">{escape(t(lang, "logout"))}</a>'
+    body = f'<div class="grid">{rows}{add_form}</div><p class="small" style="margin-top:12px">{escape(t(lang, "decision_order"))}</p>'
+    return _shell("KidsControl", t(lang, "server_time", time=now_iso), body, nav=nav, flash=flash, lang=lang)
+
+
+def _select(name: str, current: str, options: list[tuple[str, str]]) -> str:
+    opts = []
+    for value, label in options:
+        selected = " selected" if value == current else ""
+        opts.append(f'<option value="{escape(value)}"{selected}>{escape(label)}</option>')
+    return f'<select name="{escape(name)}">{"".join(opts)}</select>'
 
 
 def render_child_page(
@@ -274,9 +280,22 @@ def render_child_page(
     presets: list[str],
     flash: str | None = None,
     watches: list[dict] | None = None,
+    lang: str = "de",
+    setup_command: str = "",
 ) -> str:
     slug = escape(child["slug"])
-    nav = f'<a href="/dashboard">← Dashboard</a><a href="/ui/child/{slug}">Übersicht</a><a href="/logout">Logout</a>'
+    nav = (
+        f'<a href="/dashboard">{escape(t(lang, "back_dashboard"))}</a>'
+        f'<a href="/ui/child/{slug}">{escape(t(lang, "overview"))}</a>'
+        f'<a href="/logout">{escape(t(lang, "logout"))}</a>'
+    )
+    setup_card = f"""
+<div class="card">
+  <h2 style="margin:0 0 8px 0;font-size:16px">{escape(t(lang, "client_setup_title"))}</h2>
+  <p class="small">{escape(t(lang, "client_setup_intro"))}</p>
+  <div class="small" style="margin-top:8px">{escape(t(lang, "client_setup_cmd_label"))}</div>
+  <pre style="white-space:pre-wrap;background:#0d1012;border:1px solid var(--border);border-radius:12px;padding:12px"><code>{escape(setup_command)}</code></pre>
+</div>"""
 
     # schedules table
     rows = ""
@@ -286,7 +305,7 @@ def render_child_page(
         eh, em = divmod(int(s["end_min"]), 60)
         rows += f"""
 <tr>
-  <td><b>{WEEKDAYS_DE[wd]}</b></td>
+  <td><b>{escape(weekday(lang, wd))}</b></td>
   <td><input name="wd{wd}_start_h" type="number" min="0" max="23" value="{sh}"></td>
   <td><input name="wd{wd}_start_m" type="number" min="0" max="59" value="{sm}"></td>
   <td><input name="wd{wd}_end_h" type="number" min="0" max="23" value="{eh}"></td>
@@ -294,92 +313,96 @@ def render_child_page(
   <td><input name="wd{wd}_daily" type="number" min="0" max="1440" value="{int(s["daily_minutes"])}"></td>
 </tr>"""
 
-    preset_opts = "".join(f'<option value="{escape(p)}">{escape(p)}</option>' for p in presets)
+    preset_opts = "".join(
+        f'<option value="{escape(p)}">{escape(preset_label(lang, p))}</option>' for p in presets
+    )
 
     schedule_card = f"""
 <div class="card">
-  <h2 style="margin:0 0 8px 0;font-size:16px">Zeitplan & Tagesbudget</h2>
+  <h2 style="margin:0 0 8px 0;font-size:16px">{escape(t(lang, "schedule_title"))}</h2>
   <form method="post" action="/ui/child/{slug}/schedule">
     <div class="two" style="margin-bottom:12px">
       <div>
-        <div class="small">Preset</div>
+                <div class="small">{escape(t(lang, "preset"))}</div>
         <select name="preset">{preset_opts}</select>
       </div>
       <div style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap">
-        <button class="btn ghost" name="action" value="apply_preset" type="submit">Preset anwenden</button>
-        <button class="btn" name="action" value="save" type="submit">Zeitplan speichern</button>
-        <button class="btn ghost" name="action" value="reset_daily" type="submit">Tagesnutzung zurücksetzen</button>
+                <button class="btn ghost" name="action" value="apply_preset" type="submit">{escape(t(lang, "apply_preset"))}</button>
+                <button class="btn" name="action" value="save" type="submit">{escape(t(lang, "save_schedule"))}</button>
+                <button class="btn ghost" name="action" value="reset_daily" type="submit">{escape(t(lang, "reset_daily"))}</button>
       </div>
     </div>
     <table>
-      <thead><tr><th>Tag</th><th>Start h</th><th>Start m</th><th>Ende h</th><th>Ende m</th><th>Min/Tag</th></tr></thead>
+                <thead><tr><th>{escape(t(lang, "day"))}</th><th>{escape(t(lang, "start_h"))}</th><th>{escape(t(lang, "start_m"))}</th><th>{escape(t(lang, "end_h"))}</th><th>{escape(t(lang, "end_m"))}</th><th>{escape(t(lang, "min_day"))}</th></tr></thead>
       <tbody>{rows}</tbody>
     </table>
-    <p class="small" style="margin-top:8px">0 Minuten/Tag = kein Zugriff an diesem Wochentag.</p>
+    <p class="small" style="margin-top:8px">{escape(t(lang, "zero_minutes"))}</p>
   </form>
 </div>"""
 
+    match_opts = [
+        ("contains", t(lang, "contains")),
+        ("exact", t(lang, "exact")),
+        ("startswith", t(lang, "startswith")),
+    ]
+    scope_opts = [
+        ("always", t(lang, "scope_always")),
+        ("when_denied", t(lang, "scope_denied")),
+    ]
+    enabled_opts = [("1", t(lang, "on")), ("0", t(lang, "off"))]
     app_rows = ""
     for a in apps:
+        enabled_val = "1" if a["enabled"] else "0"
         app_rows += f"""
-<tr>
-  <td>{escape(a["label"] or a["pattern"])}</td>
-  <td><code>{escape(a["pattern"])}</code></td>
-  <td>{escape(a["match_mode"])}</td>
-  <td>{escape(a["scope"])}</td>
-  <td>{"an" if a["enabled"] else "aus"}</td>
-  <td>
-    <form method="post" action="/ui/child/{slug}/apps/{a["id"]}/delete">
-      <button class="btn danger" type="submit">Löschen</button>
-    </form>
-  </td>
-</tr>"""
+<form method="post" action="/ui/child/{slug}/apps/{a["id"]}" class="two" style="margin-top:10px">
+  <div><div class="small">{escape(t(lang, "name"))}</div><input name="label" value="{escape(a["label"] or "")}"/></div>
+  <div><div class="small">{escape(t(lang, "pattern"))}</div><input name="pattern" value="{escape(a["pattern"])}" required/></div>
+  <div><div class="small">{escape(t(lang, "match"))}</div>{_select("match_mode", a["match_mode"], match_opts)}</div>
+  <div><div class="small">{escape(t(lang, "scope"))}</div>{_select("scope", a["scope"], scope_opts)}</div>
+  <div><div class="small">{escape(t(lang, "status"))}</div>{_select("enabled", enabled_val, enabled_opts)}</div>
+  <div style="display:flex;align-items:flex-end;gap:8px">
+    <button class="btn" type="submit">{escape(t(lang, "save"))}</button>
+  </div>
+</form>
+<form method="post" action="/ui/child/{slug}/apps/{a["id"]}/delete" style="margin:0 0 8px 0">
+  <button class="btn danger" type="submit">{escape(t(lang, "delete"))}</button>
+</form>"""
     if not app_rows:
-        app_rows = '<tr><td colspan="6" class="small">Noch keine App-Sperren.</td></tr>'
+        app_rows = f'<p class="small">{escape(t(lang, "no_apps"))}</p>'
 
     apps_card = f"""
 <div class="card">
-  <h2 style="margin:0 0 8px 0;font-size:16px">App-Sperren</h2>
-  <p class="small">Der Agent beendet passende Prozesse auf Windows, macOS und Linux. Muster beziehen sich auf Prozess- bzw. Dateinamen (z.B. <code>minecraft</code>, <code>RobloxPlayerBeta.exe</code>, <code>steam</code>).</p>
-  <table style="margin-top:10px">
-    <thead><tr><th>Name</th><th>Muster</th><th>Match</th><th>Geltung</th><th>Status</th><th></th></tr></thead>
-    <tbody>{app_rows}</tbody>
-  </table>
+  <h2 style="margin:0 0 8px 0;font-size:16px">{escape(t(lang, "apps_title"))}</h2>
+  <p class="small">{escape(t(lang, "apps_intro"))}</p>
+  {app_rows}
   <form method="post" action="/ui/child/{slug}/apps/add" style="margin-top:12px;display:grid;gap:10px">
     <div class="two">
       <div>
-        <div class="small">Anzeigename (optional)</div>
+        <div class="small">{escape(t(lang, "label_optional"))}</div>
         <input name="label" placeholder="Minecraft" autocomplete="off"/>
       </div>
       <div>
-        <div class="small">Prozess-Muster *</div>
-        <input name="pattern" placeholder="z.B. minecraft" required autocomplete="off"/>
+        <div class="small">{escape(t(lang, "pattern_required"))}</div>
+        <input name="pattern" placeholder="{escape(t(lang, "pattern_ph"))}" required autocomplete="off"/>
       </div>
     </div>
     <div class="two">
       <div>
-        <div class="small">Match</div>
-        <select name="match_mode">
-          <option value="contains" selected>enthält</option>
-          <option value="exact">exakt</option>
-          <option value="startswith">beginnt mit</option>
-        </select>
+        <div class="small">{escape(t(lang, "match"))}</div>
+        {_select("match_mode", "contains", match_opts)}
       </div>
       <div>
-        <div class="small">Geltung</div>
-        <select name="scope">
-          <option value="always" selected>immer sperren</option>
-          <option value="when_denied">nur wenn Sitzung gesperrt</option>
-        </select>
+        <div class="small">{escape(t(lang, "scope"))}</div>
+        {_select("scope", "always", scope_opts)}
       </div>
     </div>
-    <div><button class="btn" type="submit">App-Sperre hinzufügen</button></div>
+    <div><button class="btn" type="submit">{escape(t(lang, "add_block"))}</button></div>
   </form>
 </div>"""
 
     device_rows = ""
     for d in devices:
-        last = d.get("last_seen_at") or "noch nie"
+        last = d.get("last_seen_at") or t(lang, "never")
         device_rows += f"""
 <tr>
   <td>{escape(d["name"])}</td>
@@ -389,50 +412,47 @@ def render_child_page(
   <td><code style="word-break:break-all">{escape(d["device_key"])}</code></td>
   <td>
     <form method="post" action="/ui/child/{slug}/devices/{d["id"]}/delete">
-      <button class="btn danger" type="submit">Entfernen</button>
+      <button class="btn danger" type="submit">{escape(t(lang, "remove"))}</button>
     </form>
   </td>
 </tr>"""
     if not device_rows:
-        device_rows = '<tr><td colspan="6" class="small">Noch kein Gerät. Lege eines an und kopiere den Schlüssel in den Agenten.</td></tr>'
+        device_rows = f'<tr><td colspan="6" class="small">{escape(t(lang, "no_devices"))}</td></tr>'
 
     devices_card = f"""
 <div class="card">
-  <h2 style="margin:0 0 8px 0;font-size:16px">Geräte (Agenten)</h2>
-  <p class="small">Jedes Kinder-PC registriert sich mit einem Geräte-Schlüssel. Der Agent pollt den Server und setzt Zeit- sowie App-Regeln lokal durch.</p>
+  <h2 style="margin:0 0 8px 0;font-size:16px">{escape(t(lang, "devices_title"))}</h2>
+  <p class="small">{escape(t(lang, "devices_intro"))}</p>
   <table style="margin-top:10px">
-    <thead><tr><th>Name</th><th>OS</th><th>Hostname</th><th>Zuletzt gesehen</th><th>Device-Key</th><th></th></tr></thead>
+    <thead><tr><th>{escape(t(lang, "name"))}</th><th>{escape(t(lang, "os"))}</th><th>{escape(t(lang, "hostname"))}</th><th>{escape(t(lang, "last_seen"))}</th><th>Device-Key</th><th></th></tr></thead>
     <tbody>{device_rows}</tbody>
   </table>
   <form method="post" action="/ui/child/{slug}/devices/add" class="two" style="margin-top:12px">
-    <div><div class="small">Gerätename</div><input name="name" placeholder="Laptop Wohnzimmer" required/></div>
+    <div><div class="small">{escape(t(lang, "device_name"))}</div><input name="name" placeholder="Laptop" required/></div>
     <div>
-      <div class="small">Betriebssystem</div>
+      <div class="small">{escape(t(lang, "os_label"))}</div>
       <select name="os_family">
         <option value="linux">Linux</option>
         <option value="windows">Windows</option>
         <option value="macos">macOS</option>
-        <option value="unknown">Sonstiges</option>
+        <option value="unknown">{escape(t(lang, "other"))}</option>
       </select>
     </div>
-    <div style="grid-column:1/-1"><button class="btn" type="submit">Gerät anlegen</button></div>
+    <div style="grid-column:1/-1"><button class="btn" type="submit">{escape(t(lang, "add_device"))}</button></div>
   </form>
 </div>"""
 
     warn_card = f"""
 <div class="card">
-  <h2 style="margin:0 0 8px 0;font-size:16px">Einstellungen</h2>
+  <h2 style="margin:0 0 8px 0;font-size:16px">{escape(t(lang, "settings"))}</h2>
   <form method="post" action="/ui/child/{slug}/settings" class="two">
-    <div><div class="small">Zeitzone</div><input name="timezone" value="{escape(child["timezone"])}"/></div>
-    <div><div class="small">Vorwarnung (Minuten vor Fensterende)</div><input name="warn_minutes" type="number" min="0" max="120" value="{int(child["warn_minutes"])}"/></div>
+    <div><div class="small">{escape(t(lang, "timezone"))}</div><input name="timezone" value="{escape(child["timezone"])}"/></div>
+    <div><div class="small">{escape(t(lang, "warn_minutes"))}</div><input name="warn_minutes" type="number" min="0" max="120" value="{int(child["warn_minutes"])}"/></div>
     <div>
-      <div class="small">Aktiv</div>
-      <select name="active">
-        <option value="1" {"selected" if child["active"] else ""}>ja</option>
-        <option value="0" {"selected" if not child["active"] else ""}>nein</option>
-      </select>
+      <div class="small">{escape(t(lang, "active"))}</div>
+      {_select("active", "1" if child["active"] else "0", [("1", t(lang, "yes")), ("0", t(lang, "no"))])}
     </div>
-    <div style="display:flex;align-items:flex-end"><button class="btn" type="submit">Speichern</button></div>
+    <div style="display:flex;align-items:flex-end"><button class="btn" type="submit">{escape(t(lang, "save"))}</button></div>
   </form>
 </div>"""
 
@@ -445,12 +465,12 @@ def render_child_page(
   <td><code>{escape(w["package_name"])}</code></td>
   <td>
     <form method="post" action="/ui/child/{slug}/watches/{w["id"]}/delete">
-      <button class="btn danger" type="submit">Entfernen</button>
+      <button class="btn danger" type="submit">{escape(t(lang, "remove"))}</button>
     </form>
   </td>
 </tr>"""
     if not watch_rows:
-        watch_rows = '<tr><td colspan="3" class="small">Noch keine beobachtete Software.</td></tr>'
+        watch_rows = f'<tr><td colspan="3" class="small">{escape(t(lang, "no_watches"))}</td></tr>'
 
     version_blocks = ""
     for d in devices:
@@ -465,78 +485,79 @@ def render_child_page(
   <td>
     <form method="post" action="/ui/child/{slug}/devices/{d["id"]}/update">
       <input type="hidden" name="package_name" value="{escape(item["package_name"])}"/>
-      <button class="btn" type="submit">Update</button>
+      <button class="btn" type="submit">{escape(t(lang, "update"))}</button>
     </form>
   </td>
 </tr>"""
         if not rows:
-            rows = '<tr><td colspan="5" class="small">Noch keine Versionsmeldung. Der Agent meldet Stände nach dem nächsten Abruf.</td></tr>'
+            rows = f'<tr><td colspan="5" class="small">{escape(t(lang, "no_versions"))}</td></tr>'
         cmd_bits = ""
         for c in d.get("commands") or []:
-            cmd_bits += f'<div class="small">#{c["id"]} {escape(c["kind"])} {escape(c.get("package_name") or "alle")} via {escape(c["via"])}: {escape(c["status"])} {escape(c.get("output") or "")}</div>'
+            cmd_bits += f'<div class="small">#{c["id"]} {escape(c["kind"])} {escape(c.get("package_name") or t(lang, "all"))} via {escape(c["via"])}: {escape(c["status"])} {escape(c.get("output") or "")}</div>'
         ssh_on = "selected" if d.get("ssh_enabled") else ""
         ssh_off = "" if d.get("ssh_enabled") else "selected"
         version_blocks += f"""
 <div class="card">
-  <h3 style="margin:0 0 8px 0;font-size:15px">{escape(d["name"])} · Softwarestände</h3>
+  <h3 style="margin:0 0 8px 0;font-size:15px">{escape(d["name"])} · {escape(t(lang, "software_title"))}</h3>
   <table>
-    <thead><tr><th>Paket</th><th>Version</th><th>Quelle</th><th>Gemeldet</th><th></th></tr></thead>
+    <thead><tr><th>{escape(t(lang, "package"))}</th><th>{escape(t(lang, "version"))}</th><th>{escape(t(lang, "source"))}</th><th>{escape(t(lang, "reported"))}</th><th></th></tr></thead>
     <tbody>{rows}</tbody>
   </table>
   <form method="post" action="/ui/child/{slug}/devices/{d["id"]}/update" style="margin-top:10px">
-    <button class="btn ghost" type="submit">Alle Updates anstoßen</button>
+    <button class="btn ghost" type="submit">{escape(t(lang, "update_all"))}</button>
   </form>
   <div style="margin-top:8px">{cmd_bits}</div>
-  <h3 style="margin:16px 0 8px 0;font-size:15px">SSH (Linux)</h3>
-  <p class="small">Schlüsselbasiert, ohne Passwortabfrage. Der private Schlüssel liegt auf dem KidsControl-Server. Für apt/dnf/pacman braucht der SSH-Benutzer passwortloses sudo.</p>
+  <h3 style="margin:16px 0 8px 0;font-size:15px">{escape(t(lang, "ssh_title"))}</h3>
+  <p class="small">{escape(t(lang, "ssh_intro"))}</p>
   <form method="post" action="/ui/child/{slug}/devices/{d["id"]}/ssh" class="two">
     <div>
-      <div class="small">SSH aktiv</div>
+      <div class="small">{escape(t(lang, "ssh_active"))}</div>
       <select name="ssh_enabled">
-        <option value="0" {ssh_off}>nein</option>
-        <option value="1" {ssh_on}>ja</option>
+        <option value="0" {ssh_off}>{escape(t(lang, "no"))}</option>
+        <option value="1" {ssh_on}>{escape(t(lang, "yes"))}</option>
       </select>
     </div>
-    <div><div class="small">Host</div><input name="ssh_host" value="{escape(d.get("ssh_host") or d.get("hostname") or "")}" placeholder="192.168.1.20"/></div>
-    <div><div class="small">Port</div><input name="ssh_port" type="number" min="1" max="65535" value="{int(d.get("ssh_port") or 22)}"/></div>
-    <div><div class="small">Benutzer</div><input name="ssh_user" value="{escape(d.get("ssh_user") or "")}" placeholder="kids"/></div>
-    <div style="grid-column:1/-1"><div class="small">Pfad zum privaten Schlüssel auf dem Server</div><input name="ssh_key_path" value="{escape(d.get("ssh_key_path") or "")}" placeholder="/opt/kids-control/keys/mia_laptop"/></div>
+    <div><div class="small">{escape(t(lang, "host"))}</div><input name="ssh_host" value="{escape(d.get("ssh_host") or d.get("hostname") or "")}" placeholder="192.168.1.20"/></div>
+    <div><div class="small">{escape(t(lang, "port"))}</div><input name="ssh_port" type="number" min="1" max="65535" value="{int(d.get("ssh_port") or 22)}"/></div>
+    <div><div class="small">{escape(t(lang, "user"))}</div><input name="ssh_user" value="{escape(d.get("ssh_user") or "")}" placeholder="kids"/></div>
+    <div style="grid-column:1/-1"><div class="small">{escape(t(lang, "key_path"))}</div><input name="ssh_key_path" value="{escape(d.get("ssh_key_path") or "")}" readonly/></div>
     <div style="grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn" type="submit">SSH speichern</button>
+      <button class="btn" type="submit">{escape(t(lang, "save_ssh"))}</button>
     </div>
   </form>
   <form method="post" action="/ui/child/{slug}/devices/{d["id"]}/ssh-test" style="margin-top:8px">
-    <button class="btn ghost" type="submit">SSH-Verbindung prüfen</button>
+    <button class="btn ghost" type="submit">{escape(t(lang, "test_ssh"))}</button>
   </form>
 </div>"""
 
     software_card = f"""
 <div class="card">
-  <h2 style="margin:0 0 8px 0;font-size:16px">Softwarestände</h2>
-  <p class="small">Pakete, deren Version der Agent (Windows/macOS/Linux) meldet. Updates laufen über den Agenten oder sofort per SSH auf Linux-Geräten.</p>
+  <h2 style="margin:0 0 8px 0;font-size:16px">{escape(t(lang, "software_title"))}</h2>
+  <p class="small">{escape(t(lang, "software_intro"))}</p>
   <table style="margin-top:10px">
-    <thead><tr><th>Name</th><th>Paket</th><th></th></tr></thead>
+    <thead><tr><th>{escape(t(lang, "name"))}</th><th>{escape(t(lang, "package"))}</th><th></th></tr></thead>
     <tbody>{watch_rows}</tbody>
   </table>
   <form method="post" action="/ui/child/{slug}/watches/add" class="two" style="margin-top:12px">
-    <div><div class="small">Anzeigename</div><input name="label" placeholder="Firefox" autocomplete="off"/></div>
-    <div><div class="small">Paketname</div><input name="package_name" placeholder="firefox" required autocomplete="off"/></div>
-    <div style="grid-column:1/-1"><button class="btn" type="submit">Beobachten</button></div>
+    <div><div class="small">{escape(t(lang, "display_name"))}</div><input name="label" placeholder="Firefox" autocomplete="off"/></div>
+    <div><div class="small">{escape(t(lang, "package_name"))}</div><input name="package_name" placeholder="firefox" required autocomplete="off"/></div>
+    <div style="grid-column:1/-1"><button class="btn" type="submit">{escape(t(lang, "watch"))}</button></div>
   </form>
 </div>
 {version_blocks}"""
 
-    body = f'<div class="grid">{warn_card}{schedule_card}{apps_card}{devices_card}{software_card}</div>'
+    body = f'<div class="grid">{setup_card}{warn_card}{schedule_card}{apps_card}{devices_card}{software_card}</div>'
     return _shell(
         f'{child["display_name"]}',
-        f'Kind {child["slug"]}',
+        t(lang, "child_sub", slug=child["slug"]),
         body,
         nav=nav,
         flash=flash,
+        lang=lang,
     )
 
 
-def render_audit(entries: list[dict], flash: str | None = None) -> str:
+def render_audit(entries: list[dict], flash: str | None = None, lang: str = "de") -> str:
     rows = ""
     for e in entries:
         rows += f"""
@@ -548,15 +569,15 @@ def render_audit(entries: list[dict], flash: str | None = None) -> str:
   <td class="small">{escape(e.get("details") or "")}</td>
 </tr>"""
     if not rows:
-        rows = '<tr><td colspan="5" class="small">Noch keine Einträge.</td></tr>'
-    nav = '<a href="/dashboard">Dashboard</a><a href="/ui/audit">Protokoll</a><a href="/logout">Logout</a>'
+        rows = f'<tr><td colspan="5" class="small">{escape(t(lang, "no_audit"))}</td></tr>'
+    nav = f'<a href="/dashboard">{escape(t(lang, "dashboard"))}</a><a href="/ui/audit">{escape(t(lang, "audit"))}</a><a href="/logout">{escape(t(lang, "logout"))}</a>'
     body = f"""
 <div class="grid">
   <div class="card">
     <table>
-      <thead><tr><th>Zeit</th><th>Akteur</th><th>Kind</th><th>Aktion</th><th>Details</th></tr></thead>
+      <thead><tr><th>{escape(t(lang, "time"))}</th><th>{escape(t(lang, "actor"))}</th><th>{escape(t(lang, "child"))}</th><th>{escape(t(lang, "action"))}</th><th>{escape(t(lang, "details"))}</th></tr></thead>
       <tbody>{rows}</tbody>
     </table>
   </div>
 </div>"""
-    return _shell("Protokoll", "Nachvollziehbare Eltern-Aktionen", body, nav=nav, flash=flash)
+    return _shell(t(lang, "audit_title"), t(lang, "audit_sub"), body, nav=nav, flash=flash, lang=lang)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -13,6 +14,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from zoneinfo import ZoneInfo
 
 from app import config
+from app.i18n import t
 from app.db import (
     AppRule,
     AuditLog,
@@ -30,7 +32,7 @@ from app.db import (
     init_db,
     utcnow,
 )
-from app.ssh_control import remote_update_script, run_ssh
+from app.ssh_control import remote_update_script, run_ssh, store_private_key
 from app.policy import (
     REASON_LABELS_DE,
     SCHEDULE_PRESETS,
@@ -55,7 +57,7 @@ app.add_middleware(SessionMiddleware, secret_key=config.SECRET)
 @app.middleware("http")
 async def require_setup(request: Request, call_next):
     path = request.url.path
-    open_paths = path in {"/healthz", "/setup"}
+    open_paths = path in {"/healthz", "/setup"} or path.startswith("/lang/")
     if not config.is_configured():
         if open_paths:
             return await call_next(request)
@@ -76,6 +78,43 @@ def tz() -> ZoneInfo:
 
 def now_local() -> datetime:
     return datetime.now(tz())
+
+
+def ui_lang(request: Request) -> str:
+    saved = request.session.get("lang")
+    if saved in {"de", "en"}:
+        return saved
+    accept = (request.headers.get("accept-language") or "").lower()
+    return "en" if accept.startswith("en") else "de"
+
+
+def say(request: Request, key: str, **kwargs) -> str:
+    return t(ui_lang(request), key, **kwargs)
+
+
+def slugify(name: str) -> str:
+    translated = name.strip().lower().translate(str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"}))
+    slug = re.sub(r"[^a-z0-9]+", "-", translated).strip("-")[:32]
+    return slug or "child"
+
+
+def unique_slug(db, name: str) -> str:
+    base = slugify(name)
+    slug = base
+    n = 2
+    while db.query(Child).filter_by(slug=slug).first():
+        suffix = f"-{n}"
+        slug = f"{base[: 32 - len(suffix)]}{suffix}"
+        n += 1
+    return slug
+
+
+def public_base(request: Request) -> str:
+    return str(request.base_url).rstrip("/")
+
+
+def setup_command(request: Request, token: str) -> str:
+    return f"python -m kidscontrol_agent.setup --server {public_base(request)} --token {token}"
 
 
 def logged_in(request: Request) -> str | None:
@@ -134,14 +173,15 @@ def healthz():
 
 
 @app.get("/setup")
-def setup_page():
+def setup_page(request: Request):
     if config.is_configured():
         return RedirectResponse("/login", status_code=302)
-    return HTMLResponse(render_setup())
+    return HTMLResponse(render_setup(lang=ui_lang(request)))
 
 
 @app.post("/setup")
 def setup_submit(
+    request: Request,
     admin_user: str = Form(...),
     admin_password: str = Form(...),
     admin_password_repeat: str = Form(...),
@@ -151,10 +191,11 @@ def setup_submit(
 ):
     if config.is_configured():
         return RedirectResponse("/login", status_code=302)
+    language = ui_lang(request)
     if admin_password != admin_password_repeat:
-        return HTMLResponse(render_setup("Die Eltern-Passwörter stimmen nicht überein."), status_code=400)
+        return HTMLResponse(render_setup(t(language, "passwords_mismatch_admin"), lang=language), status_code=400)
     if setup_password != setup_password_repeat:
-        return HTMLResponse(render_setup("Die Setup-Passwörter stimmen nicht überein."), status_code=400)
+        return HTMLResponse(render_setup(t(language, "passwords_mismatch_setup"), lang=language), status_code=400)
     try:
         apply_setup(
             admin_user=admin_user,
@@ -163,8 +204,8 @@ def setup_submit(
             timezone_name=timezone_name,
         )
     except SetupError as exc:
-        return HTMLResponse(render_setup(str(exc)), status_code=400)
-    return HTMLResponse(render_setup_done())
+        return HTMLResponse(render_setup(t(language, str(exc)), lang=language), status_code=400)
+    return HTMLResponse(render_setup_done(lang=language))
 
 
 def _require_setup_password(given: str):
@@ -180,22 +221,29 @@ def _require_setup_password(given: str):
 # ---------------------------------------------------------------------------
 
 
+@app.get("/lang/{code}")
+def set_lang(request: Request, code: str):
+    request.session["lang"] = "en" if code == "en" else "de"
+    target = request.headers.get("referer") or "/dashboard"
+    return RedirectResponse(target, status_code=302)
+
+
 @app.get("/login")
-def login_page():
-    return HTMLResponse(render_login(config.ADMIN_USER))
+def login_page(request: Request):
+    return HTMLResponse(render_login(config.ADMIN_USER, lang=ui_lang(request)))
 
 
 @app.post("/login")
 def login(request: Request, username: str = Form(...), password: str = Form(...)):
     if not config.ADMIN_PASSWORD:
         return HTMLResponse(
-            render_login(config.ADMIN_USER, error="KIDSCONTROL_ADMIN_PASSWORD ist nicht gesetzt."),
+            render_login(config.ADMIN_USER, error=say(request, "not_configured"), lang=ui_lang(request)),
             status_code=500,
         )
     if username == config.ADMIN_USER and password == config.ADMIN_PASSWORD:
         request.session["user"] = username
         return RedirectResponse("/dashboard", status_code=302)
-    return HTMLResponse(render_login(config.ADMIN_USER, error="Login fehlgeschlagen."), status_code=401)
+    return HTMLResponse(render_login(config.ADMIN_USER, error=say(request, "login_failed"), lang=ui_lang(request)), status_code=401)
 
 
 @app.get("/logout")
@@ -244,7 +292,9 @@ def dashboard(request: Request):
                 }
             )
         flash = request.session.pop("flash", None)
-        return HTMLResponse(render_dashboard(now_local().isoformat(timespec="seconds"), kids_out, flash=flash))
+        return HTMLResponse(
+            render_dashboard(now_local().isoformat(timespec="seconds"), kids_out, flash=flash, lang=ui_lang(request))
+        )
     finally:
         db.close()
 
@@ -253,22 +303,26 @@ def dashboard(request: Request):
 def add_child(
     request: Request,
     display_name: str = Form(...),
-    slug: str = Form(...),
+    slug: str = Form(""),
 ):
     denied = require_admin(request)
     if denied:
         return denied
-    slug = slug.strip().lower()
     display_name = display_name.strip()
     db = SessionLocal()
     try:
-        if db.query(Child).filter_by(slug=slug).first():
-            request.session["flash"] = f"Kurz-ID „{slug}“ existiert bereits."
-            return RedirectResponse("/dashboard", status_code=302)
+        slug = slug.strip().lower()
+        if slug:
+            if db.query(Child).filter_by(slug=slug).first():
+                request.session["flash"] = say(request, "slug_exists", slug=slug)
+                return RedirectResponse("/dashboard", status_code=302)
+        else:
+            slug = unique_slug(db, display_name)
         child = Child(
             slug=slug,
             display_name=display_name,
             timezone=config.TIMEZONE,
+            enroll_token=secrets.token_urlsafe(18),
         )
         db.add(child)
         db.flush()
@@ -276,7 +330,7 @@ def add_child(
             db.add(sched)
         audit(db, actor=config.ADMIN_USER, action="CHILD_CREATE", child_slug=slug, details=display_name)
         db.commit()
-        request.session["flash"] = f"Kind „{display_name}“ angelegt."
+        request.session["flash"] = say(request, "child_created", name=display_name)
         return RedirectResponse(f"/ui/child/{slug}", status_code=302)
     finally:
         db.close()
@@ -365,6 +419,9 @@ def child_page(request: Request, slug: str):
             {"id": w.id, "package_name": w.package_name, "label": w.label}
             for w in child.watches
         ]
+        if not child.enroll_token:
+            child.enroll_token = secrets.token_urlsafe(18)
+            db.commit()
         flash = request.session.pop("flash", None)
         return HTMLResponse(
             render_child_page(
@@ -381,6 +438,8 @@ def child_page(request: Request, slug: str):
                 list(SCHEDULE_PRESETS.keys()),
                 flash=flash,
                 watches=watches,
+                lang=ui_lang(request),
+                setup_command=setup_command(request, child.enroll_token),
             )
         )
     finally:
@@ -406,7 +465,7 @@ async def child_settings(request: Request, slug: str):
         child.active = bool(active)
         audit(db, actor=config.ADMIN_USER, action="CHILD_SETTINGS", child_slug=slug)
         db.commit()
-        request.session["flash"] = "Einstellungen gespeichert."
+        request.session["flash"] = say(request, "settings_saved")
         return RedirectResponse(f"/ui/child/{slug}", status_code=302)
     finally:
         db.close()
@@ -430,7 +489,7 @@ async def child_schedule(request: Request, slug: str):
             db.query(DailyUsage).filter_by(child_id=child.id, day=day).delete(synchronize_session=False)
             audit(db, actor=config.ADMIN_USER, action="RESET_DAILY", child_slug=slug, details=day)
             db.commit()
-            request.session["flash"] = "Tagesnutzung zurückgesetzt."
+            request.session["flash"] = say(request, "daily_reset")
             return RedirectResponse(f"/ui/child/{slug}", status_code=302)
 
         week: dict[int, dict] = {}
@@ -438,7 +497,7 @@ async def child_schedule(request: Request, slug: str):
             preset_name = str(form.get("preset") or "")
             preset = SCHEDULE_PRESETS.get(preset_name)
             if not preset:
-                request.session["flash"] = "Unbekanntes Preset."
+                request.session["flash"] = say(request, "unknown_preset")
                 return RedirectResponse(f"/ui/child/{slug}", status_code=302)
             week = {int(k): dict(v) for k, v in preset.items()}
             audit(db, actor=config.ADMIN_USER, action="APPLY_PRESET", child_slug=slug, details=preset_name)
@@ -465,7 +524,7 @@ async def child_schedule(request: Request, slug: str):
             row.end_min = vals["end_min"]
             row.daily_minutes = vals["daily_minutes"]
         db.commit()
-        request.session["flash"] = "Zeitplan gespeichert."
+        request.session["flash"] = say(request, "schedule_saved")
         return RedirectResponse(f"/ui/child/{slug}", status_code=302)
     finally:
         db.close()
@@ -490,7 +549,7 @@ def add_app_rule(
             return HTMLResponse("Kind nicht gefunden", status_code=404)
         pattern = pattern.strip()
         if not pattern:
-            request.session["flash"] = "Muster darf nicht leer sein."
+            request.session["flash"] = say(request, "pattern_empty")
             return RedirectResponse(f"/ui/child/{slug}", status_code=302)
         if match_mode not in {"contains", "exact", "startswith"}:
             match_mode = "contains"
@@ -508,7 +567,44 @@ def add_app_rule(
         )
         audit(db, actor=config.ADMIN_USER, action="APP_RULE_ADD", child_slug=slug, details=pattern)
         db.commit()
-        request.session["flash"] = f"App-Sperre „{pattern}“ hinzugefügt."
+        request.session["flash"] = say(request, "app_added", pattern=pattern)
+        return RedirectResponse(f"/ui/child/{slug}", status_code=302)
+    finally:
+        db.close()
+
+
+@app.post("/ui/child/{slug}/apps/{rule_id}")
+async def edit_app_rule(request: Request, slug: str, rule_id: int):
+    denied = require_admin(request)
+    if denied:
+        return denied
+    form = await request.form()
+    db = SessionLocal()
+    try:
+        child = get_child_by_slug(db, slug)
+        if not child:
+            return HTMLResponse("Kind nicht gefunden", status_code=404)
+        rule = db.query(AppRule).filter_by(id=rule_id, child_id=child.id).first()
+        if not rule:
+            return HTMLResponse("App-Sperre nicht gefunden", status_code=404)
+        pattern = str(form.get("pattern") or "").strip()
+        if not pattern:
+            request.session["flash"] = say(request, "pattern_empty")
+            return RedirectResponse(f"/ui/child/{slug}", status_code=302)
+        match_mode = str(form.get("match_mode") or "contains")
+        scope = str(form.get("scope") or "always")
+        if match_mode not in {"contains", "exact", "startswith"}:
+            match_mode = "contains"
+        if scope not in {"always", "when_denied"}:
+            scope = "always"
+        rule.label = (str(form.get("label") or pattern)).strip()
+        rule.pattern = pattern
+        rule.match_mode = match_mode
+        rule.scope = scope
+        rule.enabled = str(form.get("enabled") or "1") == "1"
+        audit(db, actor=config.ADMIN_USER, action="APP_RULE_EDIT", child_slug=slug, details=pattern)
+        db.commit()
+        request.session["flash"] = say(request, "app_saved")
         return RedirectResponse(f"/ui/child/{slug}", status_code=302)
     finally:
         db.close()
@@ -529,7 +625,7 @@ def delete_app_rule(request: Request, slug: str, rule_id: int):
             audit(db, actor=config.ADMIN_USER, action="APP_RULE_DELETE", child_slug=slug, details=rule.pattern)
             db.delete(rule)
             db.commit()
-        request.session["flash"] = "App-Sperre entfernt."
+        request.session["flash"] = say(request, "app_deleted")
         return RedirectResponse(f"/ui/child/{slug}", status_code=302)
     finally:
         db.close()
@@ -563,7 +659,7 @@ def add_device(
         )
         audit(db, actor=config.ADMIN_USER, action="DEVICE_ADD", child_slug=slug, details=name.strip())
         db.commit()
-        request.session["flash"] = f"Gerät angelegt. Device-Key: {key}"
+        request.session["flash"] = say(request, "device_added")
         return RedirectResponse(f"/ui/child/{slug}", status_code=302)
     finally:
         db.close()
@@ -584,7 +680,7 @@ def delete_device(request: Request, slug: str, device_id: int):
             audit(db, actor=config.ADMIN_USER, action="DEVICE_DELETE", child_slug=slug, details=device.name)
             db.delete(device)
             db.commit()
-        request.session["flash"] = "Gerät entfernt."
+        request.session["flash"] = say(request, "device_removed")
         return RedirectResponse(f"/ui/child/{slug}", status_code=302)
     finally:
         db.close()
@@ -614,7 +710,7 @@ async def save_device_ssh(request: Request, slug: str, device_id: int):
             device.ssh_port = 22
         audit(db, actor=config.ADMIN_USER, action="DEVICE_SSH", child_slug=slug, details=device.name)
         db.commit()
-        request.session["flash"] = f"SSH-Einstellungen für {device.name} gespeichert."
+        request.session["flash"] = say(request, "ssh_saved", name=device.name)
         return RedirectResponse(f"/ui/child/{slug}", status_code=302)
     finally:
         db.close()
@@ -634,12 +730,12 @@ def test_device_ssh(request: Request, slug: str, device_id: int):
         try:
             code, text = run_ssh(device, "echo kidscontrol-ok && uname -a", timeout=20)
         except Exception as exc:
-            request.session["flash"] = f"SSH-Test fehlgeschlagen: {exc}"
+            request.session["flash"] = say(request, "ssh_failed", error=exc)
             return RedirectResponse(f"/ui/child/{slug}", status_code=302)
         if code == 0 and "kidscontrol-ok" in text:
-            request.session["flash"] = f"SSH ok ({device.name}): {text.splitlines()[-1][:180]}"
+            request.session["flash"] = say(request, "ssh_ok", name=device.name, detail=text.splitlines()[-1][:180])
         else:
-            request.session["flash"] = f"SSH-Test Code {code}: {text[:240]}"
+            request.session["flash"] = say(request, "ssh_code", code=code, detail=text[:240])
         return RedirectResponse(f"/ui/child/{slug}", status_code=302)
     finally:
         db.close()
@@ -657,14 +753,14 @@ def add_watch(request: Request, slug: str, package_name: str = Form(...), label:
         if not child:
             return HTMLResponse("Kind nicht gefunden", status_code=404)
         if not name:
-            request.session["flash"] = "Paketname fehlt."
+            request.session["flash"] = say(request, "package_missing")
             return RedirectResponse(f"/ui/child/{slug}", status_code=302)
         existing = db.query(SoftwareWatch).filter_by(child_id=child.id, package_name=name).first()
         if not existing:
             db.add(SoftwareWatch(child_id=child.id, package_name=name, label=(label or name).strip()))
             audit(db, actor=config.ADMIN_USER, action="WATCH_ADD", child_slug=slug, details=name)
             db.commit()
-        request.session["flash"] = f"Software „{name}“ wird beobachtet."
+        request.session["flash"] = say(request, "watch_added", name=name)
         return RedirectResponse(f"/ui/child/{slug}", status_code=302)
     finally:
         db.close()
@@ -685,13 +781,13 @@ def delete_watch(request: Request, slug: str, watch_id: int):
             db.delete(row)
             audit(db, actor=config.ADMIN_USER, action="WATCH_DELETE", child_slug=slug, details=row.package_name)
             db.commit()
-        request.session["flash"] = "Beobachtung entfernt."
+        request.session["flash"] = say(request, "watch_removed")
         return RedirectResponse(f"/ui/child/{slug}", status_code=302)
     finally:
         db.close()
 
 
-def _queue_or_ssh_update(db, device: Device, *, package_name: str | None, actor: str, child_slug: str) -> str:
+def _queue_or_ssh_update(db, device: Device, *, package_name: str | None, actor: str, child_slug: str, lang: str = "de") -> str:
     kind = "update_one" if package_name else "update_all"
     if device.ssh_enabled and device.os_family == "linux":
         cmd = DeviceCommand(
@@ -713,7 +809,7 @@ def _queue_or_ssh_update(db, device: Device, *, package_name: str | None, actor:
             cmd.output = str(exc)
             cmd.finished_at = utcnow()
         audit(db, actor=actor, action="REMOTE_UPDATE_SSH", child_slug=child_slug, details=package_name or "all")
-        return f"SSH-Update {cmd.status}: {(cmd.output or '')[:180]}"
+        return t(lang, "update_ssh", status=cmd.status, detail=(cmd.output or "")[:180])
 
     db.add(
         DeviceCommand(
@@ -725,7 +821,7 @@ def _queue_or_ssh_update(db, device: Device, *, package_name: str | None, actor:
         )
     )
     audit(db, actor=actor, action="REMOTE_UPDATE_QUEUE", child_slug=child_slug, details=package_name or "all")
-    return "Update in die Agenten-Warteschlange gelegt. Der Agent führt es beim nächsten Abruf aus."
+    return t(lang, "update_queued")
 
 
 @app.post("/ui/child/{slug}/devices/{device_id}/update")
@@ -745,7 +841,9 @@ def queue_update(
         if not device:
             return HTMLResponse("Gerät nicht gefunden", status_code=404)
         pkg = package_name.strip() or None
-        msg = _queue_or_ssh_update(db, device, package_name=pkg, actor=config.ADMIN_USER, child_slug=slug)
+        msg = _queue_or_ssh_update(
+            db, device, package_name=pkg, actor=config.ADMIN_USER, child_slug=slug, lang=ui_lang(request)
+        )
         db.commit()
         request.session["flash"] = msg
         return RedirectResponse(f"/ui/child/{slug}", status_code=302)
@@ -787,7 +885,7 @@ def grant_hour(request: Request, slug: str):
         )
         audit(db, actor=config.ADMIN_USER, action="GRANT_HOUR", child_slug=slug)
         db.commit()
-        request.session["flash"] = f"+1 Stunde für {child.display_name}."
+        request.session["flash"] = say(request, "grant_hour", name=child.display_name)
         return RedirectResponse("/dashboard", status_code=302)
     finally:
         db.close()
@@ -809,7 +907,7 @@ def grant_day(request: Request, slug: str):
             row.enabled = False
             row.updated_at = utcnow()
             action = "GRANT_DAY_OFF"
-            msg = f"Unbegrenzt aus für {child.display_name}."
+            msg = say(request, "grant_day_off", name=child.display_name)
         else:
             if not row:
                 row = DayOverride(child_id=child.id, day=day, enabled=True)
@@ -818,7 +916,7 @@ def grant_day(request: Request, slug: str):
                 row.enabled = True
                 row.updated_at = utcnow()
             action = "GRANT_DAY_ON"
-            msg = f"Heute unbegrenzt für {child.display_name}."
+            msg = say(request, "grant_day_on", name=child.display_name)
         audit(db, actor=config.ADMIN_USER, action=action, child_slug=slug, details=day)
         db.commit()
         request.session["flash"] = msg
@@ -845,7 +943,7 @@ def audit_page(request: Request):
             }
             for r in rows
         ]
-        return HTMLResponse(render_audit(entries))
+        return HTMLResponse(render_audit(entries, lang=ui_lang(request)))
     finally:
         db.close()
 
@@ -875,30 +973,42 @@ async def setup_children(request: Request):
         db.close()
 
 
+def _normalize_os(raw: str) -> str:
+    os_family = (raw or "unknown").strip().lower()
+    if os_family == "darwin":
+        os_family = "macos"
+    if os_family not in {"linux", "windows", "macos", "unknown"}:
+        return "unknown"
+    return os_family
+
+
 @app.post("/api/v1/setup/enroll")
 async def setup_enroll(request: Request):
     try:
         body = await request.json()
     except Exception:
         body = {}
-    denied = _require_setup_password(str(body.get("setup_password") or ""))
-    if denied:
-        return denied
-    slug = str(body.get("child_slug") or "").strip().lower()
-    device_name = str(body.get("device_name") or "").strip()
-    os_family = str(body.get("os") or body.get("os_family") or "unknown").strip().lower()
+    token = str(body.get("token") or "").strip()
+    os_family = _normalize_os(str(body.get("os") or body.get("os_family") or "unknown"))
     host_name = str(body.get("hostname") or "").strip() or None
-    if os_family == "darwin":
-        os_family = "macos"
-    if os_family not in {"linux", "windows", "macos", "unknown"}:
-        os_family = "unknown"
-    if not slug or not device_name:
-        return JSONResponse({"error": "child_slug_and_device_name_required"}, status_code=400)
+    device_name = str(body.get("device_name") or "").strip() or host_name or "PC"
     db = SessionLocal()
     try:
-        child = get_child_by_slug(db, slug)
-        if not child or not child.active:
-            return JSONResponse({"error": "unknown_child"}, status_code=404)
+        child = None
+        if token:
+            child = db.query(Child).filter_by(enroll_token=token, active=True).first()
+            if not child:
+                return JSONResponse({"error": "setup_token_rejected"}, status_code=401)
+        else:
+            denied = _require_setup_password(str(body.get("setup_password") or ""))
+            if denied:
+                return denied
+            slug = str(body.get("child_slug") or "").strip().lower()
+            if not slug:
+                return JSONResponse({"error": "child_slug_and_device_name_required"}, status_code=400)
+            child = get_child_by_slug(db, slug)
+            if not child or not child.active:
+                return JSONResponse({"error": "unknown_child"}, status_code=404)
         key = secrets.token_urlsafe(24)
         device = Device(
             child_id=child.id,
@@ -907,8 +1017,23 @@ async def setup_enroll(request: Request):
             os_family=os_family,
             hostname=host_name,
         )
+        private_key = str(body.get("ssh_private_key") or "")
+        ssh_user = str(body.get("ssh_user") or "").strip() or None
+        if private_key.strip():
+            device.ssh_user = ssh_user
+            device.ssh_host = host_name
+            device.ssh_port = 22
+            device.ssh_enabled = os_family == "linux"
         db.add(device)
-        audit(db, actor="client-setup", action="DEVICE_ENROLL", child_slug=slug, details=device_name[:80])
+        db.flush()
+        if private_key.strip():
+            try:
+                path = store_private_key(device.id, private_key)
+            except ValueError:
+                db.rollback()
+                return JSONResponse({"error": "invalid_private_key"}, status_code=400)
+            device.ssh_key_path = str(path)
+        audit(db, actor="client-setup", action="DEVICE_ENROLL", child_slug=child.slug, details=device.name)
         db.commit()
         return JSONResponse(
             {
@@ -916,6 +1041,7 @@ async def setup_enroll(request: Request):
                 "device_name": device.name,
                 "child": {"slug": child.slug, "display_name": child.display_name},
                 "poll_interval_seconds": config.AGENT_POLL_SECONDS,
+                "ssh_ready": bool(device.ssh_key_path),
             }
         )
     finally:

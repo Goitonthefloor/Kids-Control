@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+from pathlib import Path
 
+from app import config
 from app.db import Device
 
 
@@ -78,6 +81,25 @@ else
   exit 3
 fi
 """
+
+
+def store_private_key(device_id: int, private_key: str) -> Path:
+    text = (private_key or "").strip()
+    if "PRIVATE KEY" not in text or len(text) > 16000:
+        raise ValueError("invalid_private_key")
+    directory = config.data_dir() / "keys"
+    directory.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(directory, 0o700)
+    except OSError:
+        pass
+    path = directory / f"device-{device_id}"
+    path.write_text(text + "\n", encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return path
 
 
 def remote_update_script(package_name: str | None) -> str:

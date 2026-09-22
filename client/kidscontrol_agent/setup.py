@@ -12,6 +12,7 @@ import urllib.request
 from pathlib import Path
 
 from kidscontrol_agent.enforce import detect_os, hostname
+from kidscontrol_agent.os_requirements import ensure_keypair, install_authorized_key, install_openssh
 
 
 def default_env_path() -> Path:
@@ -52,24 +53,27 @@ def list_children(server: str, setup_password: str) -> list[dict]:
 
 def enroll(
     server: str,
-    setup_password: str,
+    setup_password: str = "",
     *,
-    child_slug: str,
-    device_name: str,
+    child_slug: str = "",
+    device_name: str = "",
+    token: str = "",
     os_name: str | None = None,
     host: str | None = None,
+    ssh_private_key: str = "",
+    ssh_user: str = "",
 ) -> dict:
-    return _post(
-        server,
-        "/api/v1/setup/enroll",
-        {
-            "setup_password": setup_password,
-            "child_slug": child_slug,
-            "device_name": device_name,
-            "os": os_name or detect_os(),
-            "hostname": host or hostname(),
-        },
-    )
+    payload = {
+        "setup_password": setup_password,
+        "child_slug": child_slug,
+        "device_name": device_name,
+        "token": token,
+        "os": os_name or detect_os(),
+        "hostname": host or hostname(),
+        "ssh_private_key": ssh_private_key,
+        "ssh_user": ssh_user or getpass.getuser(),
+    }
+    return _post(server, "/api/v1/setup/enroll", payload)
 
 
 def write_client_env(path: Path, *, server: str, device_key: str, poll_seconds: int = 30) -> None:
@@ -89,9 +93,11 @@ def write_client_env(path: Path, *, server: str, device_key: str, poll_seconds: 
 def _interactive(args: argparse.Namespace) -> argparse.Namespace:
     if not args.server:
         args.server = input("Server-Adresse [http://127.0.0.1:8000]: ").strip() or "http://127.0.0.1:8000"
-    if not args.setup_password:
+    if not args.token and not (args.setup_password and args.child):
+        args.token = input("Einrichtungscode von der Kind-Seite: ").strip()
+    if not args.token and not args.setup_password:
         args.setup_password = getpass.getpass("Client-Setup-Passwort: ")
-    if not args.child:
+    if not args.token and not args.child:
         kids = list_children(args.server, args.setup_password)
         if not kids:
             raise SystemExit("Am Server ist noch kein Kind angelegt. Bitte zuerst in der Eltern-UI ein Kind anlegen.")
@@ -110,22 +116,41 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--server", default="")
     parser.add_argument("--setup-password", default="")
     parser.add_argument("--child", default="", help="Kurz-ID des Kindes")
+    parser.add_argument("--token", default="", help="Einrichtungscode von der Kind-Seite")
     parser.add_argument("--device-name", default="")
     parser.add_argument("--out", default="", help="Pfad für client.env")
+    parser.add_argument("--skip-packages", action="store_true")
     args = parser.parse_args(argv)
-    if sys.stdin.isatty() and not (args.server and args.setup_password and args.child and args.device_name):
+    ready = bool(args.server and (args.token or (args.setup_password and args.child)))
+    if sys.stdin.isatty() and not ready:
         args = _interactive(args)
-    if not (args.server and args.setup_password and args.child and args.device_name):
+        ready = bool(args.server and (args.token or (args.setup_password and args.child)))
+    if not ready:
         print(
-            "Nicht-interaktiv: --server, --setup-password, --child und --device-name sind nötig.",
+            "Nicht-interaktiv: --server und --token (oder --setup-password und --child) sind nötig.",
             file=sys.stderr,
         )
         return 2
+    if not args.device_name:
+        args.device_name = hostname() or "PC"
+    os_name = detect_os()
+    if not args.skip_packages:
+        for line in install_openssh(os_name=os_name, dry_run=False):
+            print(f"[pkg] {line}")
+    private_key = ""
+    try:
+        private_key, public_key = ensure_keypair()
+        install_authorized_key(public_key)
+    except Exception as exc:
+        print(f"SSH-Schlüssel konnte nicht erzeugt werden: {exc}", file=sys.stderr)
     result = enroll(
         args.server,
         args.setup_password,
         child_slug=args.child,
         device_name=args.device_name,
+        token=args.token,
+        ssh_private_key=private_key,
+        ssh_user=getpass.getuser(),
     )
     out = Path(args.out) if args.out else default_env_path()
     write_client_env(
