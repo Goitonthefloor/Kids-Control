@@ -1,22 +1,24 @@
 # KidsControl
 
-**Zentraler Anlaufpunkt** für Eltern: Nutzungszeit der Kinder-PCs steuern und App-Aufrufe unterbinden – **unabhängig vom Betriebssystem** (Windows, macOS, Linux).
-
-Dieses Projekt wurde mit Unterstützung von KI erstellt.
+Deutsch unten. English follows.
 
 ---
+
+# Deutsch
+
+**Zentraler Anlaufpunkt** für Eltern: Nutzungszeit der Kinder-PCs steuern und App-Aufrufe unterbinden – **unabhängig vom Betriebssystem** (Windows, macOS, Linux).
+
+Die Web-Oberfläche gibt es auf Deutsch und Englisch (Schalter **DE / EN**).
 
 ## Was KidsControl macht
 
-1. **Eltern-Hub (Server)** – Web-UI + API als einzige Quelle der Wahrheit
-2. **Agent auf jedem Kinder-PC** – holt Regeln vom Server und setzt sie lokal durch
-3. **Nutzungszeit** – Wochentags-Fenster, Tagesminuten, +1h / „Heute unbegrenzt“
-4. **App-Sperren** – Prozesse nach Namen/Muster beenden (z.B. `minecraft`, `steam`)
-5. **Softwarestände und Updates** – beobachtete Paketversionen, Update per Agent oder SSH (Linux)
+1. **Eltern-Hub (Server)** – Web-UI und API, einzige Quelle der Wahrheit
+2. **Agent auf jedem Kinder-PC** – holt Regeln ab und setzt sie lokal durch
+3. **Nutzungszeit** – Zeitfenster, Tagesminuten, +1h, „Heute unbegrenzt“
+4. **App-Sperren** – Prozesse nach Muster beenden; jede Sperre ist danach änderbar
+5. **Softwarestände und Updates** – Versionen melden, Updates über den Agenten oder per SSH
 
 Keine Inhaltsanalyse, kein Keylogging, keine Bildschirmüberwachung.
-
----
 
 ## Systemvoraussetzungen
 
@@ -29,7 +31,7 @@ Keine Inhaltsanalyse, kein Keylogging, keine Bildschirmüberwachung.
 | Arbeitsspeicher | 256 MB frei reichen für einen Haushalt |
 | Speicherplatz | etwa 500 MB inklusive virtueller Umgebung und SQLite-Datenbank |
 | Netzwerk | ein freier TCP-Port (Standard **8000**), von den Kinder-PCs im LAN erreichbar |
-| Browser | aktuelle Version von Firefox, Chrome, Edge oder Safari für die Eltern-UI |
+| Browser | aktuelle Version von Firefox, Chrome, Edge oder Safari |
 
 Nicht nötig: Active Directory, Docker, dieselbe Distribution auf allen Rechnern.
 
@@ -41,19 +43,10 @@ Nicht nötig: Active Directory, Docker, dieselbe Distribution auf allen Rechnern
 | Python | 3.10+ | 3.10+ | 3.10+ |
 | Sitzung sperren | `LockWorkStation` | Bildschirmsperre über das System | `loginctl` oder Bildschirmschoner |
 | Apps beenden | `taskkill` | `kill` | `kill` |
-| Softwarestände / Updates | optional `winget` | optional Homebrew | `apt`, `dnf` oder `pacman`; Updates brauchen passwortloses `sudo` |
-| Autostart | Aufgabenplanung oder Dienst | launchd | systemd (siehe `client/install-linux.sh`) |
-
-Jeder Client braucht Netzwerkzugriff zum Server. Für Linux-Updates über SSH zusätzlich OpenSSH auf dem Kinder-PC und einen privaten Schlüssel auf dem Server.
-
----
+| OpenSSH | optional, Client vorhanden | eingebaut | wird beim Setup per apt, dnf oder pacman installiert (`openssh-server`) |
+| Updates | optional `winget` | optional Homebrew | `apt`, `dnf` oder `pacman`; Updates brauchen passwortloses `sudo` |
 
 ## Einrichtung
-
-Es gibt zwei Passwörter:
-
-- **Eltern-Passwort** – Login in der Web-Oberfläche
-- **Client-Setup-Passwort** – nur für die Einrichtung eines Kinder-PCs. Damit legt der Client ein Gerät an einem bereits vorhandenen Kind an und erhält einen Device-Key.
 
 ### 1. Server
 
@@ -61,78 +54,126 @@ Es gibt zwei Passwörter:
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python -m app.setup                # fragt beide Passwörter ab
+python -m app.setup
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Ohne vorheriges CLI-Setup zeigt der erste Aufruf im Browser dieselbe Einrichtung.
+Ohne CLI-Setup zeigt der erste Browser-Aufruf dieselbe Einrichtung. Die Datei `data/server.env` nicht ins Git legen.
 
-Danach: anmelden, Kind anlegen, Zeitplan und App-Sperren setzen.
+Es gibt zwei Server-Passwörter:
 
-Die Konfiguration liegt in `data/server.env` (nicht ins Git legen).
+- **Eltern-Passwort** – Login in der Web-Oberfläche
+- **Client-Setup-Passwort** – nur für die Ersteinrichtung des Servers, nicht für jeden Kinder-PC
 
-### 2. Client
+### 2. Kind und Client in einem Schritt
 
-Auf dem Kinder-PC, im Ordner `client` (Linux-Dienst: `sudo ./install-linux.sh`):
-
-```bash
-python -m kidscontrol_agent.setup
-```
-
-Abgefragt werden Server-Adresse, **Client-Setup-Passwort**, Kind und Gerätename. Das schreibt `client.env`. Start:
+1. Anmelden und nur den Namen des Kindes eintragen.
+2. Die Kind-Seite zeigt **einen Befehl**. Den auf dem Kinder-PC im Ordner `client` ausführen:
 
 ```bash
-python -m kidscontrol_agent --env /pfad/zu/client.env
+python -m kidscontrol_agent.setup --server http://IP-DES-SERVERS:8000 --token CODE
 ```
 
-Nicht-interaktiv:
+Der Client erkennt das Betriebssystem. Unter Linux installiert er OpenSSH mit dem Paketmanager, erzeugt einen SSH-Schlüssel, legt den öffentlichen Teil in `authorized_keys` und überträgt den privaten Schlüssel an den Server. Danach steht das Gerät in der Eltern-UI, SSH ist für Linux aktiv.
 
-```bash
-python -m kidscontrol_agent.setup \
-  --server http://192.168.1.10:8000 \
-  --setup-password '...' \
-  --child mia \
-  --device-name "Laptop" \
-  --out client.env
-```
-
----
-
-## Architektur
-
-```
-Eltern-Browser ──► KidsControl Server (FastAPI + SQLite)
-                         ▲
-                         │ Poll mit Device-Key
-           ┌─────────────┼─────────────┐
-           │             │             │
-      Agent Win     Agent macOS    Agent Linux
-```
-
-Der Server entscheidet. Der Agent führt aus.
-
----
+Linux-Dienst: `sudo ./install-linux.sh`, danach denselben Befehl mit `--out /etc/kidscontrol/client.env`.
 
 ## Dokumentation
 
-- `docs/ARCHITECTURE.md` – Zielbild
-- `docs/DATABASE.md` – Datenmodell
-- `docs/SERVER_SETUP.md` – Server-Installation
-- `docs/CLIENT.md` – Agent je Betriebssystem
-
----
+- `docs/ARCHITECTURE.md`
+- `docs/DATABASE.md`
+- `docs/SERVER_SETUP.md`
+- `docs/CLIENT.md`
 
 ## Lizenzierung
 
-Dual Licensing:
-
 - Open Source: **GPL-3.0-or-later**
-- Kommerzielle Lizenzen auf Anfrage: **rolf_greger@web.de**
+- Kommerzielle Lizenzen: **rolf_greger@web.de**
 
 ---
 
-## Status
+# English
 
-**v1.1 – Setup für Server und Clients**
+**Central place** for parents to control screen time and block apps on children's PCs, **independent of the operating system** (Windows, macOS, Linux).
 
-Eltern-Hub, Zeitregeln, App-Sperren, Softwarestände, optionales SSH und ein Setup mit getrenntem Client-Passwort.
+The web UI is available in German and English (switch **DE / EN**).
+
+## What KidsControl does
+
+1. **Parent hub (server)** – web UI and API, the only source of truth
+2. **Agent on each child PC** – pulls the rules and enforces them locally
+3. **Screen time** – weekly windows, daily minutes, +1h, “unlimited today”
+4. **App blocks** – stop processes by pattern; each block can be edited later
+5. **Software versions and updates** – report versions, update via the agent or over SSH
+
+No content inspection, no keylogging, no screen surveillance.
+
+## System requirements
+
+### Server (parent hub)
+
+| | |
+|---|---|
+| Operating system | Linux for an always-on hub (systemd). Windows 10/11 and macOS 12+ can run the hub as well. |
+| Python | 3.10 or newer, with `pip` and `venv` |
+| Memory | 256 MB free is enough for a household |
+| Disk | about 500 MB including the virtualenv and the SQLite database |
+| Network | one free TCP port (default **8000**) reachable from the child PCs on the LAN |
+| Browser | a current Firefox, Chrome, Edge, or Safari |
+
+Not required: Active Directory, Docker, or the same distribution on every machine.
+
+### Clients (child PCs)
+
+| | Windows | macOS | Linux |
+|---|---|---|---|
+| Version | Windows 10 or 11 | macOS 12 or newer | a current distribution with systemd |
+| Python | 3.10+ | 3.10+ | 3.10+ |
+| Lock session | `LockWorkStation` | system screen lock | `loginctl` or a screensaver |
+| Stop apps | `taskkill` | `kill` | `kill` |
+| OpenSSH | optional; the client is usually present | built in | installed during setup by apt, dnf, or pacman (`openssh-server`) |
+| Updates | optional `winget` | optional Homebrew | `apt`, `dnf`, or `pacman`; updates need passwordless `sudo` |
+
+## Setup
+
+### 1. Server
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+python -m app.setup
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Without the CLI, the first browser visit shows the same setup. Do not commit `data/server.env`.
+
+Two server passwords:
+
+- **Parent password** – signs in to the web UI
+- **Client setup password** – only for the first server setup, not for every child PC
+
+### 2. Child and client in one step
+
+1. Sign in and enter only the child's name.
+2. The child page shows **one command**. Run it on the child PC inside the `client` folder:
+
+```bash
+python -m kidscontrol_agent.setup --server http://SERVER-IP:8000 --token CODE
+```
+
+The client detects the OS. On Linux it installs OpenSSH with the package manager, creates an SSH key, puts the public key in `authorized_keys`, and sends the private key to the server. The device then shows up in the parent UI, with SSH enabled for Linux.
+
+Linux service: `sudo ./install-linux.sh`, then the same command with `--out /etc/kidscontrol/client.env`.
+
+## Documentation
+
+- `docs/ARCHITECTURE.md`
+- `docs/DATABASE.md`
+- `docs/SERVER_SETUP.md`
+- `docs/CLIENT.md`
+
+## Licensing
+
+- Open source: **GPL-3.0-or-later**
+- Commercial licenses: **rolf_greger@web.de**

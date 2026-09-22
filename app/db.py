@@ -39,6 +39,7 @@ class Child(Base):
     timezone = Column(String, nullable=False, default="Europe/Berlin")
     active = Column(Boolean, nullable=False, default=True)
     warn_minutes = Column(Integer, nullable=False, default=10)
+    enroll_token = Column(String, unique=True, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     devices = relationship("Device", back_populates="child", cascade="all, delete-orphan")
@@ -214,6 +215,7 @@ class AuditLog(Base):
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_device_ssh_columns()
+    _ensure_child_enroll_token()
 
 
 def _ensure_device_ssh_columns() -> None:
@@ -232,6 +234,15 @@ def _ensure_device_ssh_columns() -> None:
         for name, ddl in alters.items():
             if name not in cols:
                 conn.exec_driver_sql(f"ALTER TABLE devices ADD COLUMN {name} {ddl}")
+
+
+def _ensure_child_enroll_token() -> None:
+    if not str(engine.url).startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(children)").fetchall()}
+        if "enroll_token" not in cols:
+            conn.exec_driver_sql("ALTER TABLE children ADD COLUMN enroll_token VARCHAR")
 
 
 def audit(db, *, actor: str, action: str, child_slug: str | None = None, details: str | None = None) -> None:
