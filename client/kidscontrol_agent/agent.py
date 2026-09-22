@@ -17,15 +17,18 @@ from kidscontrol_agent.enforce import (
     lock_session,
     notify,
 )
+from kidscontrol_agent.inventory import load_cached_watches, query_versions, run_update, save_cached_watches
 
 
 def sync(server: str, device_key: str, *, active: bool = True) -> dict:
     url = f"{server}/api/v1/agent/sync"
+    watches = load_cached_watches()
     payload = json.dumps(
         {
             "active": active,
             "hostname": hostname(),
             "os": detect_os(),
+            "inventory": query_versions(watches) if watches else [],
         }
     ).encode("utf-8")
     req = urllib.request.Request(
@@ -65,6 +68,40 @@ def enforce_policy(policy: dict, *, dry_run: bool = False) -> None:
             notify("KidsControl", f"Noch ca. {rem} Minuten", dry_run=dry_run)
 
 
+def report_command(server: str, device_key: str, command_id: int, status: str, output: str) -> None:
+    url = f"{server}/api/v1/agent/commands/{command_id}/result"
+    payload = json.dumps({"status": status, "output": output}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "X-Device-Key": device_key,
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        resp.read()
+
+
+def handle_commands(cfg: dict, policy: dict) -> None:
+    watches = policy.get("watch_packages") or []
+    if isinstance(watches, list):
+        save_cached_watches([str(x) for x in watches])
+    for cmd in policy.get("commands") or []:
+        kind = cmd.get("kind")
+        package = cmd.get("package_name")
+        cid = cmd.get("id")
+        if kind not in {"update_one", "update_all"} or cid is None:
+            continue
+        print(f"[update] command={cid} kind={kind} package={package}")
+        status, output = run_update(package if kind == "update_one" else None, dry_run=cfg["dry_run"])
+        try:
+            report_command(cfg["server"], cfg["device_key"], int(cid), status, output)
+        except Exception as exc:
+            print(f"Ergebnis-Meldung fehlgeschlagen: {exc}", file=sys.stderr)
+
+
 def run_once(cfg: dict) -> int:
     if not cfg["device_key"]:
         print("Fehler: KIDSCONTROL_DEVICE_KEY fehlt.", file=sys.stderr)
@@ -86,6 +123,7 @@ def run_once(cfg: dict) -> int:
         f"blocked_apps={len(policy.get('blocked_apps') or [])}"
     )
     enforce_policy(policy, dry_run=cfg["dry_run"])
+    handle_commands(cfg, policy)
     return 0
 
 

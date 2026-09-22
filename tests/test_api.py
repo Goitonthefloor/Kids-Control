@@ -93,6 +93,93 @@ def test_agent_rejects_bad_key(client):
     assert r.status_code == 401
 
 
+def test_inventory_and_update_queue(client):
+    login(client)
+    client.post("/ui/children/add", data={"display_name": "Leo", "slug": "leo"}, follow_redirects=False)
+    client.post(
+        "/ui/child/leo/watches/add",
+        data={"label": "Firefox", "package_name": "firefox"},
+        follow_redirects=False,
+    )
+    client.post(
+        "/ui/child/leo/devices/add",
+        data={"name": "PC", "os_family": "linux"},
+        follow_redirects=False,
+    )
+    db = SessionLocal()
+    try:
+        from app.db import Child, Device
+
+        child = db.query(Child).filter_by(slug="leo").one()
+        key = db.query(Device).filter_by(child_id=child.id).one().device_key
+    finally:
+        db.close()
+
+    r = client.post(
+        "/api/v1/agent/sync",
+        headers={"X-Device-Key": key},
+        json={
+            "active": False,
+            "hostname": "leo-pc",
+            "os": "linux",
+            "inventory": [{"name": "firefox", "version": "128.0", "source": "apt"}],
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert "firefox" in body["watch_packages"]
+
+    r = client.post(
+        "/ui/child/leo/devices/1/update",
+        data={"package_name": "firefox"},
+        follow_redirects=False,
+    )
+    # device id may not be 1 if other tests created devices in same DB
+    db = SessionLocal()
+    try:
+        from app.db import Child, Device, DeviceCommand, SoftwareItem
+
+        child = db.query(Child).filter_by(slug="leo").one()
+        device = db.query(Device).filter_by(child_id=child.id).one()
+        item = db.query(SoftwareItem).filter_by(device_id=device.id, package_name="firefox").one()
+        assert item.version == "128.0"
+        device_id = device.id
+    finally:
+        db.close()
+
+    r = client.post(
+        f"/ui/child/leo/devices/{device_id}/update",
+        data={"package_name": "firefox"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+
+    r = client.post(
+        "/api/v1/agent/sync",
+        headers={"X-Device-Key": key},
+        json={"active": False, "os": "linux", "inventory": []},
+    )
+    assert r.status_code == 200
+    commands = r.json()["commands"]
+    assert commands and commands[0]["package_name"] == "firefox"
+    cid = commands[0]["id"]
+
+    r = client.post(
+        f"/api/v1/agent/commands/{cid}/result",
+        headers={"X-Device-Key": key},
+        json={"status": "done", "output": "ok"},
+    )
+    assert r.status_code == 200
+    db = SessionLocal()
+    try:
+        from app.db import DeviceCommand
+
+        cmd = db.query(DeviceCommand).filter_by(id=cid).one()
+        assert cmd.status == "done"
+    finally:
+        db.close()
+
+
 def test_process_match_helper():
     from kidscontrol_agent.enforce import matches_rule
 

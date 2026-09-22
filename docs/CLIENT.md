@@ -50,6 +50,18 @@ KIDSCONTROL_DRY_RUN=1 python -m kidscontrol_agent --once --env /pfad/zu/client.e
 
 Für harte Durchsetzung sollte der Agent mit ausreichenden Rechten und als Autostart/Dienst laufen (systemd / launchd / Windows-Dienst – je nach Umgebung).
 
+## Softwarestände und Updates
+
+Beim Sync sendet der Agent Versionen der beobachteten Pakete und holt ausstehende Update-Befehle ab (`update_one` / `update_all`). Ergebnisse gehen an `POST /api/v1/agent/commands/{id}/result`.
+
+Linux-Updates erwarten passwortloses `sudo` für apt, dnf oder pacman.
+
+## SSH (nur Linux, optional)
+
+In der Eltern-UI: Host, Port, Benutzer und Pfad zum privaten Schlüssel auf dem Server.  
+„SSH-Verbindung prüfen“ führt `echo kidscontrol-ok` aus.  
+Ist SSH aktiv, startet „Update“ das Upgrade direkt über SSH, sonst über den Agenten.
+
 ## Sicherheit
 
 - Device-Key geheim halten (wie ein Passwort)  

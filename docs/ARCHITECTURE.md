@@ -48,6 +48,13 @@ Der Key bindet das Gerät an genau ein Kind-Profil.
 
 **App-Sperren** gelten zusätzlich (Scope `always`) auch während erlaubter Nutzungszeit.
 
+## Softwarestände und Updates
+
+- Eltern legen eine Beobachtungsliste (Paketnamen) je Kind an.
+- Der Agent meldet die installierte Version (apt/rpm/pacman, Homebrew, winget).
+- Updates können in die Agenten-Warteschlange gelegt werden.
+- Linux-Geräte mit hinterlegtem SSH-Schlüssel können Updates sofort vom Server aus anstoßen (`BatchMode`, kein Passwort-Prompt).
+
 ## Nicht-Ziele
 
 - keine Inhaltsfilterung / Web-Proxy-Pflicht

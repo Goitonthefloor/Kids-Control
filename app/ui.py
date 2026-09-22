@@ -221,6 +221,7 @@ def render_child_page(
     devices: list[dict],
     presets: list[str],
     flash: str | None = None,
+    watches: list[dict] | None = None,
 ) -> str:
     slug = escape(child["slug"])
     nav = f'<a href="/dashboard">← Dashboard</a><a href="/ui/child/{slug}">Übersicht</a><a href="/logout">Logout</a>'
@@ -292,25 +293,35 @@ def render_child_page(
     <thead><tr><th>Name</th><th>Muster</th><th>Match</th><th>Geltung</th><th>Status</th><th></th></tr></thead>
     <tbody>{app_rows}</tbody>
   </table>
-  <form method="post" action="/ui/child/{slug}/apps/add" class="two" style="margin-top:12px">
-    <div><div class="small">Anzeigename</div><input name="label" placeholder="Minecraft"/></div>
-    <div><div class="small">Prozess-Muster</div><input name="pattern" placeholder="minecraft" required/></div>
-    <div>
-      <div class="small">Match</div>
-      <select name="match_mode">
-        <option value="contains">enthält</option>
-        <option value="exact">exakt</option>
-        <option value="startswith">beginnt mit</option>
-      </select>
+  <form method="post" action="/ui/child/{slug}/apps/add" style="margin-top:12px;display:grid;gap:10px">
+    <div class="two">
+      <div>
+        <div class="small">Anzeigename (optional)</div>
+        <input name="label" placeholder="Minecraft" autocomplete="off"/>
+      </div>
+      <div>
+        <div class="small">Prozess-Muster *</div>
+        <input name="pattern" placeholder="z.B. minecraft" required autocomplete="off"/>
+      </div>
     </div>
-    <div>
-      <div class="small">Geltung</div>
-      <select name="scope">
-        <option value="always">immer sperren</option>
-        <option value="when_denied">nur wenn Sitzung gesperrt</option>
-      </select>
+    <div class="two">
+      <div>
+        <div class="small">Match</div>
+        <select name="match_mode">
+          <option value="contains" selected>enthält</option>
+          <option value="exact">exakt</option>
+          <option value="startswith">beginnt mit</option>
+        </select>
+      </div>
+      <div>
+        <div class="small">Geltung</div>
+        <select name="scope">
+          <option value="always" selected>immer sperren</option>
+          <option value="when_denied">nur wenn Sitzung gesperrt</option>
+        </select>
+      </div>
     </div>
-    <div style="grid-column:1/-1"><button class="btn" type="submit">App-Sperre hinzufügen</button></div>
+    <div><button class="btn" type="submit">App-Sperre hinzufügen</button></div>
   </form>
 </div>"""
 
@@ -373,7 +384,97 @@ def render_child_page(
   </form>
 </div>"""
 
-    body = f'<div class="grid">{warn_card}{schedule_card}{apps_card}{devices_card}</div>'
+    watches = watches or []
+    watch_rows = ""
+    for w in watches:
+        watch_rows += f"""
+<tr>
+  <td>{escape(w.get("label") or w["package_name"])}</td>
+  <td><code>{escape(w["package_name"])}</code></td>
+  <td>
+    <form method="post" action="/ui/child/{slug}/watches/{w["id"]}/delete">
+      <button class="btn danger" type="submit">Entfernen</button>
+    </form>
+  </td>
+</tr>"""
+    if not watch_rows:
+        watch_rows = '<tr><td colspan="3" class="small">Noch keine beobachtete Software.</td></tr>'
+
+    version_blocks = ""
+    for d in devices:
+        rows = ""
+        for item in d.get("software") or []:
+            rows += f"""
+<tr>
+  <td><code>{escape(item["package_name"])}</code></td>
+  <td>{escape(item["version"] or "–")}</td>
+  <td>{escape(item["source"])}</td>
+  <td class="small">{escape(item.get("reported_at") or "")}</td>
+  <td>
+    <form method="post" action="/ui/child/{slug}/devices/{d["id"]}/update">
+      <input type="hidden" name="package_name" value="{escape(item["package_name"])}"/>
+      <button class="btn" type="submit">Update</button>
+    </form>
+  </td>
+</tr>"""
+        if not rows:
+            rows = '<tr><td colspan="5" class="small">Noch keine Versionsmeldung. Der Agent meldet Stände nach dem nächsten Abruf.</td></tr>'
+        cmd_bits = ""
+        for c in d.get("commands") or []:
+            cmd_bits += f'<div class="small">#{c["id"]} {escape(c["kind"])} {escape(c.get("package_name") or "alle")} via {escape(c["via"])}: {escape(c["status"])} {escape(c.get("output") or "")}</div>'
+        ssh_on = "selected" if d.get("ssh_enabled") else ""
+        ssh_off = "" if d.get("ssh_enabled") else "selected"
+        version_blocks += f"""
+<div class="card">
+  <h3 style="margin:0 0 8px 0;font-size:15px">{escape(d["name"])} · Softwarestände</h3>
+  <table>
+    <thead><tr><th>Paket</th><th>Version</th><th>Quelle</th><th>Gemeldet</th><th></th></tr></thead>
+    <tbody>{rows}</tbody>
+  </table>
+  <form method="post" action="/ui/child/{slug}/devices/{d["id"]}/update" style="margin-top:10px">
+    <button class="btn ghost" type="submit">Alle Updates anstoßen</button>
+  </form>
+  <div style="margin-top:8px">{cmd_bits}</div>
+  <h3 style="margin:16px 0 8px 0;font-size:15px">SSH (Linux)</h3>
+  <p class="small">Schlüsselbasiert, ohne Passwortabfrage. Der private Schlüssel liegt auf dem KidsControl-Server. Für apt/dnf/pacman braucht der SSH-Benutzer passwortloses sudo.</p>
+  <form method="post" action="/ui/child/{slug}/devices/{d["id"]}/ssh" class="two">
+    <div>
+      <div class="small">SSH aktiv</div>
+      <select name="ssh_enabled">
+        <option value="0" {ssh_off}>nein</option>
+        <option value="1" {ssh_on}>ja</option>
+      </select>
+    </div>
+    <div><div class="small">Host</div><input name="ssh_host" value="{escape(d.get("ssh_host") or d.get("hostname") or "")}" placeholder="192.168.1.20"/></div>
+    <div><div class="small">Port</div><input name="ssh_port" type="number" min="1" max="65535" value="{int(d.get("ssh_port") or 22)}"/></div>
+    <div><div class="small">Benutzer</div><input name="ssh_user" value="{escape(d.get("ssh_user") or "")}" placeholder="kids"/></div>
+    <div style="grid-column:1/-1"><div class="small">Pfad zum privaten Schlüssel auf dem Server</div><input name="ssh_key_path" value="{escape(d.get("ssh_key_path") or "")}" placeholder="/opt/kids-control/keys/mia_laptop"/></div>
+    <div style="grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn" type="submit">SSH speichern</button>
+    </div>
+  </form>
+  <form method="post" action="/ui/child/{slug}/devices/{d["id"]}/ssh-test" style="margin-top:8px">
+    <button class="btn ghost" type="submit">SSH-Verbindung prüfen</button>
+  </form>
+</div>"""
+
+    software_card = f"""
+<div class="card">
+  <h2 style="margin:0 0 8px 0;font-size:16px">Softwarestände</h2>
+  <p class="small">Pakete, deren Version der Agent (Windows/macOS/Linux) meldet. Updates laufen über den Agenten oder sofort per SSH auf Linux-Geräten.</p>
+  <table style="margin-top:10px">
+    <thead><tr><th>Name</th><th>Paket</th><th></th></tr></thead>
+    <tbody>{watch_rows}</tbody>
+  </table>
+  <form method="post" action="/ui/child/{slug}/watches/add" class="two" style="margin-top:12px">
+    <div><div class="small">Anzeigename</div><input name="label" placeholder="Firefox" autocomplete="off"/></div>
+    <div><div class="small">Paketname</div><input name="package_name" placeholder="firefox" required autocomplete="off"/></div>
+    <div style="grid-column:1/-1"><button class="btn" type="submit">Beobachten</button></div>
+  </form>
+</div>
+{version_blocks}"""
+
+    body = f'<div class="grid">{warn_card}{schedule_card}{apps_card}{devices_card}{software_card}</div>'
     return _shell(
         f'{child["display_name"]}',
         f'Kind {child["slug"]}',

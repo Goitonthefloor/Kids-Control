@@ -44,6 +44,7 @@ class Child(Base):
     devices = relationship("Device", back_populates="child", cascade="all, delete-orphan")
     schedules = relationship("Schedule", back_populates="child", cascade="all, delete-orphan")
     app_rules = relationship("AppRule", back_populates="child", cascade="all, delete-orphan")
+    watches = relationship("SoftwareWatch", back_populates="child", cascade="all, delete-orphan")
 
 
 class Device(Base):
@@ -59,8 +60,15 @@ class Device(Base):
     hostname = Column(String, nullable=True)
     last_seen_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    ssh_enabled = Column(Boolean, nullable=False, default=False)
+    ssh_host = Column(String, nullable=True)
+    ssh_port = Column(Integer, nullable=False, default=22)
+    ssh_user = Column(String, nullable=True)
+    ssh_key_path = Column(String, nullable=True)
 
     child = relationship("Child", back_populates="devices")
+    software = relationship("SoftwareItem", back_populates="device", cascade="all, delete-orphan")
+    commands = relationship("DeviceCommand", back_populates="device", cascade="all, delete-orphan")
 
 
 class Schedule(Base):
@@ -138,6 +146,60 @@ class DailyUsage(Base):
     )
 
 
+class SoftwareWatch(Base):
+    """Packages whose version should be tracked on the child's devices."""
+
+    __tablename__ = "software_watches"
+
+    id = Column(Integer, primary_key=True)
+    child_id = Column(Integer, ForeignKey("children.id", ondelete="CASCADE"), nullable=False)
+    package_name = Column(String, nullable=False)
+    label = Column(String, nullable=False, default="")
+
+    child = relationship("Child", back_populates="watches")
+
+    __table_args__ = (
+        UniqueConstraint("child_id", "package_name", name="uq_watch_child_package"),
+    )
+
+
+class SoftwareItem(Base):
+    """Last reported version of a watched package on one device."""
+
+    __tablename__ = "software_items"
+
+    id = Column(Integer, primary_key=True)
+    device_id = Column(Integer, ForeignKey("devices.id", ondelete="CASCADE"), nullable=False)
+    package_name = Column(String, nullable=False)
+    version = Column(String, nullable=False, default="")
+    source = Column(String, nullable=False, default="unknown")
+    reported_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    device = relationship("Device", back_populates="software")
+
+    __table_args__ = (
+        UniqueConstraint("device_id", "package_name", name="uq_software_device_package"),
+    )
+
+
+class DeviceCommand(Base):
+    """Queued remote action for an agent (or recorded SSH result)."""
+
+    __tablename__ = "device_commands"
+
+    id = Column(Integer, primary_key=True)
+    device_id = Column(Integer, ForeignKey("devices.id", ondelete="CASCADE"), nullable=False)
+    kind = Column(String, nullable=False)  # update_one | update_all
+    package_name = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="pending")  # pending|running|done|failed
+    via = Column(String, nullable=False, default="agent")  # agent|ssh
+    output = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+
+    device = relationship("Device", back_populates="commands")
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
 
@@ -151,6 +213,25 @@ class AuditLog(Base):
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    _ensure_device_ssh_columns()
+
+
+def _ensure_device_ssh_columns() -> None:
+    """Add SSH columns on databases created before v1.1."""
+    if not str(engine.url).startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(devices)").fetchall()}
+        alters = {
+            "ssh_enabled": "BOOLEAN NOT NULL DEFAULT 0",
+            "ssh_host": "VARCHAR",
+            "ssh_port": "INTEGER NOT NULL DEFAULT 22",
+            "ssh_user": "VARCHAR",
+            "ssh_key_path": "VARCHAR",
+        }
+        for name, ddl in alters.items():
+            if name not in cols:
+                conn.exec_driver_sql(f"ALTER TABLE devices ADD COLUMN {name} {ddl}")
 
 
 def audit(db, *, actor: str, action: str, child_slug: str | None = None, details: str | None = None) -> None:

@@ -20,13 +20,17 @@ from app.db import (
     DailyUsage,
     DayOverride,
     Device,
+    DeviceCommand,
     Override,
     Schedule,
     SessionLocal,
+    SoftwareItem,
+    SoftwareWatch,
     audit,
     init_db,
     utcnow,
 )
+from app.ssh_control import remote_update_script, run_ssh
 from app.policy import (
     REASON_LABELS_DE,
     SCHEDULE_PRESETS,
@@ -71,6 +75,24 @@ def require_admin(request: Request):
 
 def get_child_by_slug(db, slug: str) -> Child | None:
     return db.query(Child).filter_by(slug=slug).first()
+
+
+def _store_inventory(db, device: Device, inventory: list) -> None:
+    for item in inventory:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("package_name") or "").strip()
+        if not name:
+            continue
+        version = str(item.get("version") or "").strip()
+        source = str(item.get("source") or "agent").strip() or "agent"
+        row = db.query(SoftwareItem).filter_by(device_id=device.id, package_name=name).first()
+        if not row:
+            row = SoftwareItem(device_id=device.id, package_name=name)
+            db.add(row)
+        row.version = version or "nicht installiert"
+        row.source = source
+        row.reported_at = utcnow()
 
 
 def default_schedules_for(child_id: int) -> list[Schedule]:
@@ -231,16 +253,59 @@ def child_page(request: Request, slug: str):
             }
             for a in child.app_rules
         ]
-        devices = [
-            {
-                "id": d.id,
-                "name": d.name,
-                "os_family": d.os_family,
-                "hostname": d.hostname,
-                "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None,
-                "device_key": d.device_key,
-            }
-            for d in child.devices
+        devices = []
+        for d in child.devices:
+            items = (
+                db.query(SoftwareItem)
+                .filter_by(device_id=d.id)
+                .order_by(SoftwareItem.package_name.asc())
+                .all()
+            )
+            cmds = (
+                db.query(DeviceCommand)
+                .filter_by(device_id=d.id)
+                .order_by(DeviceCommand.id.desc())
+                .limit(5)
+                .all()
+            )
+            devices.append(
+                {
+                    "id": d.id,
+                    "name": d.name,
+                    "os_family": d.os_family,
+                    "hostname": d.hostname,
+                    "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None,
+                    "device_key": d.device_key,
+                    "ssh_enabled": bool(d.ssh_enabled),
+                    "ssh_host": d.ssh_host or "",
+                    "ssh_port": d.ssh_port or 22,
+                    "ssh_user": d.ssh_user or "",
+                    "ssh_key_path": d.ssh_key_path or "",
+                    "software": [
+                        {
+                            "package_name": i.package_name,
+                            "version": i.version,
+                            "source": i.source,
+                            "reported_at": i.reported_at.isoformat() if i.reported_at else "",
+                        }
+                        for i in items
+                    ],
+                    "commands": [
+                        {
+                            "id": c.id,
+                            "kind": c.kind,
+                            "package_name": c.package_name,
+                            "status": c.status,
+                            "via": c.via,
+                            "output": (c.output or "")[:240],
+                        }
+                        for c in cmds
+                    ],
+                }
+            )
+        watches = [
+            {"id": w.id, "package_name": w.package_name, "label": w.label}
+            for w in child.watches
         ]
         flash = request.session.pop("flash", None)
         return HTMLResponse(
@@ -257,6 +322,7 @@ def child_page(request: Request, slug: str):
                 devices,
                 list(SCHEDULE_PRESETS.keys()),
                 flash=flash,
+                watches=watches,
             )
         )
     finally:
@@ -466,6 +532,169 @@ def delete_device(request: Request, slug: str, device_id: int):
         db.close()
 
 
+@app.post("/ui/child/{slug}/devices/{device_id}/ssh")
+async def save_device_ssh(request: Request, slug: str, device_id: int):
+    denied = require_admin(request)
+    if denied:
+        return denied
+    form = await request.form()
+    db = SessionLocal()
+    try:
+        child = get_child_by_slug(db, slug)
+        if not child:
+            return HTMLResponse("Kind nicht gefunden", status_code=404)
+        device = db.query(Device).filter_by(id=device_id, child_id=child.id).first()
+        if not device:
+            return HTMLResponse("Gerät nicht gefunden", status_code=404)
+        device.ssh_enabled = str(form.get("ssh_enabled") or "0") == "1"
+        device.ssh_host = str(form.get("ssh_host") or "").strip() or None
+        device.ssh_user = str(form.get("ssh_user") or "").strip() or None
+        device.ssh_key_path = str(form.get("ssh_key_path") or "").strip() or None
+        try:
+            device.ssh_port = max(1, min(65535, int(form.get("ssh_port") or 22)))
+        except ValueError:
+            device.ssh_port = 22
+        audit(db, actor=config.ADMIN_USER, action="DEVICE_SSH", child_slug=slug, details=device.name)
+        db.commit()
+        request.session["flash"] = f"SSH-Einstellungen für {device.name} gespeichert."
+        return RedirectResponse(f"/ui/child/{slug}", status_code=302)
+    finally:
+        db.close()
+
+
+@app.post("/ui/child/{slug}/devices/{device_id}/ssh-test")
+def test_device_ssh(request: Request, slug: str, device_id: int):
+    denied = require_admin(request)
+    if denied:
+        return denied
+    db = SessionLocal()
+    try:
+        child = get_child_by_slug(db, slug)
+        device = db.query(Device).filter_by(id=device_id, child_id=child.id).first() if child else None
+        if not device:
+            return HTMLResponse("Gerät nicht gefunden", status_code=404)
+        try:
+            code, text = run_ssh(device, "echo kidscontrol-ok && uname -a", timeout=20)
+        except Exception as exc:
+            request.session["flash"] = f"SSH-Test fehlgeschlagen: {exc}"
+            return RedirectResponse(f"/ui/child/{slug}", status_code=302)
+        if code == 0 and "kidscontrol-ok" in text:
+            request.session["flash"] = f"SSH ok ({device.name}): {text.splitlines()[-1][:180]}"
+        else:
+            request.session["flash"] = f"SSH-Test Code {code}: {text[:240]}"
+        return RedirectResponse(f"/ui/child/{slug}", status_code=302)
+    finally:
+        db.close()
+
+
+@app.post("/ui/child/{slug}/watches/add")
+def add_watch(request: Request, slug: str, package_name: str = Form(...), label: str = Form("")):
+    denied = require_admin(request)
+    if denied:
+        return denied
+    name = package_name.strip()
+    db = SessionLocal()
+    try:
+        child = get_child_by_slug(db, slug)
+        if not child:
+            return HTMLResponse("Kind nicht gefunden", status_code=404)
+        if not name:
+            request.session["flash"] = "Paketname fehlt."
+            return RedirectResponse(f"/ui/child/{slug}", status_code=302)
+        existing = db.query(SoftwareWatch).filter_by(child_id=child.id, package_name=name).first()
+        if not existing:
+            db.add(SoftwareWatch(child_id=child.id, package_name=name, label=(label or name).strip()))
+            audit(db, actor=config.ADMIN_USER, action="WATCH_ADD", child_slug=slug, details=name)
+            db.commit()
+        request.session["flash"] = f"Software „{name}“ wird beobachtet."
+        return RedirectResponse(f"/ui/child/{slug}", status_code=302)
+    finally:
+        db.close()
+
+
+@app.post("/ui/child/{slug}/watches/{watch_id}/delete")
+def delete_watch(request: Request, slug: str, watch_id: int):
+    denied = require_admin(request)
+    if denied:
+        return denied
+    db = SessionLocal()
+    try:
+        child = get_child_by_slug(db, slug)
+        if not child:
+            return HTMLResponse("Kind nicht gefunden", status_code=404)
+        row = db.query(SoftwareWatch).filter_by(id=watch_id, child_id=child.id).first()
+        if row:
+            db.delete(row)
+            audit(db, actor=config.ADMIN_USER, action="WATCH_DELETE", child_slug=slug, details=row.package_name)
+            db.commit()
+        request.session["flash"] = "Beobachtung entfernt."
+        return RedirectResponse(f"/ui/child/{slug}", status_code=302)
+    finally:
+        db.close()
+
+
+def _queue_or_ssh_update(db, device: Device, *, package_name: str | None, actor: str, child_slug: str) -> str:
+    kind = "update_one" if package_name else "update_all"
+    if device.ssh_enabled and device.os_family == "linux":
+        cmd = DeviceCommand(
+            device_id=device.id,
+            kind=kind,
+            package_name=package_name,
+            status="running",
+            via="ssh",
+        )
+        db.add(cmd)
+        db.flush()
+        try:
+            code, text = run_ssh(device, remote_update_script(package_name))
+            cmd.status = "done" if code == 0 else "failed"
+            cmd.output = text
+            cmd.finished_at = utcnow()
+        except Exception as exc:
+            cmd.status = "failed"
+            cmd.output = str(exc)
+            cmd.finished_at = utcnow()
+        audit(db, actor=actor, action="REMOTE_UPDATE_SSH", child_slug=child_slug, details=package_name or "all")
+        return f"SSH-Update {cmd.status}: {(cmd.output or '')[:180]}"
+
+    db.add(
+        DeviceCommand(
+            device_id=device.id,
+            kind=kind,
+            package_name=package_name,
+            status="pending",
+            via="agent",
+        )
+    )
+    audit(db, actor=actor, action="REMOTE_UPDATE_QUEUE", child_slug=child_slug, details=package_name or "all")
+    return "Update in die Agenten-Warteschlange gelegt. Der Agent führt es beim nächsten Abruf aus."
+
+
+@app.post("/ui/child/{slug}/devices/{device_id}/update")
+def queue_update(
+    request: Request,
+    slug: str,
+    device_id: int,
+    package_name: str = Form(""),
+):
+    denied = require_admin(request)
+    if denied:
+        return denied
+    db = SessionLocal()
+    try:
+        child = get_child_by_slug(db, slug)
+        device = db.query(Device).filter_by(id=device_id, child_id=child.id).first() if child else None
+        if not device:
+            return HTMLResponse("Gerät nicht gefunden", status_code=404)
+        pkg = package_name.strip() or None
+        msg = _queue_or_ssh_update(db, device, package_name=pkg, actor=config.ADMIN_USER, child_slug=slug)
+        db.commit()
+        request.session["flash"] = msg
+        return RedirectResponse(f"/ui/child/{slug}", status_code=302)
+    finally:
+        db.close()
+
+
 @app.post("/ui/grant/{slug}/hour")
 def grant_hour(request: Request, slug: str):
     denied = require_admin(request)
@@ -601,8 +830,25 @@ async def agent_sync(request: Request):
             device.hostname = hostname
         device.last_seen_at = utcnow()
 
+        inventory = body.get("inventory") or []
+        if isinstance(inventory, list):
+            _store_inventory(db, device, inventory)
+
         # Count usage only while the agent reports an active interactive session.
         policy = build_agent_policy(db, child, tick_usage=bool(active))
+        watches = [w.package_name for w in child.watches]
+        pending = (
+            db.query(DeviceCommand)
+            .filter_by(device_id=device.id, status="pending", via="agent")
+            .order_by(DeviceCommand.id.asc())
+            .all()
+        )
+        for cmd in pending:
+            cmd.status = "running"
+        commands = [
+            {"id": c.id, "kind": c.kind, "package_name": c.package_name}
+            for c in pending
+        ]
         db.commit()
 
         return JSONResponse(
@@ -616,8 +862,39 @@ async def agent_sync(request: Request):
                     "os_family": device.os_family,
                 },
                 "reason_labels": REASON_LABELS_DE,
+                "watch_packages": watches,
+                "commands": commands,
             }
         )
+    finally:
+        db.close()
+
+
+@app.post("/api/v1/agent/commands/{command_id}/result")
+async def agent_command_result(request: Request, command_id: int):
+    device_key = request.headers.get("X-Device-Key") or request.headers.get("x-device-key")
+    if not device_key:
+        return JSONResponse({"error": "missing_device_key"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    db = SessionLocal()
+    try:
+        device = db.query(Device).filter_by(device_key=device_key).first()
+        if not device:
+            return JSONResponse({"error": "unknown_device"}, status_code=401)
+        cmd = db.query(DeviceCommand).filter_by(id=command_id, device_id=device.id).first()
+        if not cmd:
+            return JSONResponse({"error": "unknown_command"}, status_code=404)
+        status = str(body.get("status") or "failed")
+        if status not in {"done", "failed"}:
+            status = "failed"
+        cmd.status = status
+        cmd.output = str(body.get("output") or "")[-4000:]
+        cmd.finished_at = utcnow()
+        db.commit()
+        return JSONResponse({"ok": True, "id": cmd.id, "status": cmd.status})
     finally:
         db.close()
 

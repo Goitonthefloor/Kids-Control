@@ -19,7 +19,12 @@ CREATE TABLE devices (
   os_family VARCHAR NOT NULL,
   hostname VARCHAR,
   last_seen_at DATETIME,
-  created_at DATETIME NOT NULL
+  created_at DATETIME NOT NULL,
+  ssh_enabled BOOLEAN NOT NULL DEFAULT 0,
+  ssh_host VARCHAR,
+  ssh_port INTEGER NOT NULL DEFAULT 22,
+  ssh_user VARCHAR,
+  ssh_key_path VARCHAR
 );
 
 CREATE TABLE schedules (
@@ -68,6 +73,36 @@ CREATE TABLE daily_usage (
   used_minutes INTEGER NOT NULL,
   last_seen_at DATETIME NOT NULL,
   CONSTRAINT uq_daily_usage_child_day UNIQUE (child_id, day)
+);
+
+CREATE TABLE software_watches (
+  id INTEGER PRIMARY KEY,
+  child_id INTEGER NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+  package_name VARCHAR NOT NULL,
+  label VARCHAR NOT NULL,
+  CONSTRAINT uq_watch_child_package UNIQUE (child_id, package_name)
+);
+
+CREATE TABLE software_items (
+  id INTEGER PRIMARY KEY,
+  device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  package_name VARCHAR NOT NULL,
+  version VARCHAR NOT NULL,
+  source VARCHAR NOT NULL,
+  reported_at DATETIME NOT NULL,
+  CONSTRAINT uq_software_device_package UNIQUE (device_id, package_name)
+);
+
+CREATE TABLE device_commands (
+  id INTEGER PRIMARY KEY,
+  device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  kind VARCHAR NOT NULL,
+  package_name VARCHAR,
+  status VARCHAR NOT NULL,
+  via VARCHAR NOT NULL,
+  output VARCHAR,
+  created_at DATETIME NOT NULL,
+  finished_at DATETIME
 );
 
 CREATE TABLE audit_log (
