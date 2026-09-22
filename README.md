@@ -1,151 +1,138 @@
----
+# KidsControl
 
-<img width="1169" height="301" alt="image" src="https://github.com/user-attachments/assets/ff45f0e2-d5b8-4064-84d9-bd1d6edf293f" />
+**Zentraler Anlaufpunkt** für Eltern: Nutzungszeit der Kinder-PCs steuern und App-Aufrufe unterbinden – **unabhängig vom Betriebssystem** (Windows, macOS, Linux).
 
----
-
-<img width="1469" height="347" alt="image" src="https://github.com/user-attachments/assets/44e4cd70-dc0e-4d5e-85fd-2b5c6c8da99e" />
+Dieses Projekt wurde mit Unterstützung von KI erstellt.
 
 ---
 
-<img width="1560" height="784" alt="image" src="https://github.com/user-attachments/assets/f2c3fe41-8a28-4224-85c0-f3e946b21a11" />
+## Was KidsControl macht
+
+1. **Eltern-Hub (Server)** – Web-UI + API als einzige Quelle der Wahrheit
+2. **Agent auf jedem Kinder-PC** – holt Regeln vom Server und setzt sie lokal durch
+3. **Nutzungszeit** – Wochentags-Fenster, Tagesminuten, +1h / „Heute unbegrenzt“
+4. **App-Sperren** – Prozesse nach Namen/Muster beenden (z.B. `minecraft`, `steam`)
+5. **Softwarestände und Updates** – beobachtete Paketversionen, Update per Agent oder SSH (Linux)
+
+Keine Inhaltsanalyse, kein Keylogging, keine Bildschirmüberwachung.
 
 ---
 
-<img width="1538" height="628" alt="image" src="https://github.com/user-attachments/assets/4b2a8a26-9b7a-4fc5-83d2-6805dd5d75d4" />
+## Systemvoraussetzungen
+
+### Server (Eltern-Hub)
+
+| | |
+|---|---|
+| Betriebssystem | Linux für den Dauerbetrieb (systemd). Windows 10/11 und macOS 12+ können den Hub ebenfalls starten. |
+| Python | 3.10 oder neuer, mit `pip` und `venv` |
+| Arbeitsspeicher | 256 MB frei reichen für einen Haushalt |
+| Speicherplatz | etwa 500 MB inklusive virtueller Umgebung und SQLite-Datenbank |
+| Netzwerk | ein freier TCP-Port (Standard **8000**), von den Kinder-PCs im LAN erreichbar |
+| Browser | aktuelle Version von Firefox, Chrome, Edge oder Safari für die Eltern-UI |
+
+Nicht nötig: Active Directory, Docker, dieselbe Distribution auf allen Rechnern.
+
+### Clients (Kinder-PCs)
+
+| | Windows | macOS | Linux |
+|---|---|---|---|
+| Version | Windows 10 oder 11 | macOS 12 oder neuer | aktuelle Distribution mit systemd |
+| Python | 3.10+ | 3.10+ | 3.10+ |
+| Sitzung sperren | `LockWorkStation` | Bildschirmsperre über das System | `loginctl` oder Bildschirmschoner |
+| Apps beenden | `taskkill` | `kill` | `kill` |
+| Softwarestände / Updates | optional `winget` | optional Homebrew | `apt`, `dnf` oder `pacman`; Updates brauchen passwortloses `sudo` |
+| Autostart | Aufgabenplanung oder Dienst | launchd | systemd (siehe `client/install-linux.sh`) |
+
+Jeder Client braucht Netzwerkzugriff zum Server. Für Linux-Updates über SSH zusätzlich OpenSSH auf dem Kinder-PC und einen privaten Schlüssel auf dem Server.
 
 ---
 
+## Einrichtung
 
-# Kids-Control
+Es gibt zwei Passwörter:
 
-## 🇩🇪 Deutsch
+- **Eltern-Passwort** – Login in der Web-Oberfläche
+- **Client-Setup-Passwort** – nur für die Einrichtung eines Kinder-PCs. Damit legt der Client ein Gerät an einem bereits vorhandenen Kind an und erhält einen Device-Key.
 
-**Server-zentrierte Kindersicherung für Linux-Clients.**  
-Dieses Projekt wurde mit Unterstützung von ChatGPT 5.2 erstellt.
+### 1. Server
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+python -m app.setup                # fragt beide Passwörter ab
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Ohne vorheriges CLI-Setup zeigt der erste Aufruf im Browser dieselbe Einrichtung.
+
+Danach: anmelden, Kind anlegen, Zeitplan und App-Sperren setzen.
+
+Die Konfiguration liegt in `data/server.env` (nicht ins Git legen).
+
+### 2. Client
+
+Auf dem Kinder-PC, im Ordner `client` (Linux-Dienst: `sudo ./install-linux.sh`):
+
+```bash
+python -m kidscontrol_agent.setup
+```
+
+Abgefragt werden Server-Adresse, **Client-Setup-Passwort**, Kind und Gerätename. Das schreibt `client.env`. Start:
+
+```bash
+python -m kidscontrol_agent --env /pfad/zu/client.env
+```
+
+Nicht-interaktiv:
+
+```bash
+python -m kidscontrol_agent.setup \
+  --server http://192.168.1.10:8000 \
+  --setup-password '...' \
+  --child mia \
+  --device-name "Laptop" \
+  --out client.env
+```
 
 ---
 
-## Projektstatus
+## Architektur
 
-Aktueller Stand: **v0.5 – Server-Baseline**
+```
+Eltern-Browser ──► KidsControl Server (FastAPI + SQLite)
+                         ▲
+                         │ Poll mit Device-Key
+           ┌─────────────┼─────────────┐
+           │             │             │
+      Agent Win     Agent macOS    Agent Linux
+```
 
-Der Server ist stabil, lauffähig und dokumentiert.  
-Client-Implementierungen folgen in späteren Versionen.
-
----
-
-## Leitprinzipien
-
-- Der Server ist die *Source of Truth*
-- Erklärbarkeit statt Blackbox
-- Kontrolle statt Überwachung
-- Stabilität vor Features
+Der Server entscheidet. Der Agent führt aus.
 
 ---
 
 ## Dokumentation
 
-Siehe das Verzeichnis `docs/`:
-
-- ARCHITECTURE.md
-- DATABASE.md
-- SERVER_SETUP.md
-- STATUS_v0.5.md
-
----
-
-## Hinweis
-
-Dieses Repository enthält **keine Secrets**, **keine Datenbank**  
-und **keine produktiven Client-Skripte**.
+- `docs/ARCHITECTURE.md` – Zielbild
+- `docs/DATABASE.md` – Datenmodell
+- `docs/SERVER_SETUP.md` – Server-Installation
+- `docs/CLIENT.md` – Agent je Betriebssystem
 
 ---
 
 ## Lizenzierung
 
-Kids-Control wird als **Dual-Licensing-Projekt** bereitgestellt:
+Dual Licensing:
 
 - Open Source: **GPL-3.0-or-later**
-- Kommerzielle Lizenzen auf Anfrage verfügbar
-
-Wenn du Kids-Control in einer proprietären, kommerziellen  
-oder gehosteten Umgebung einsetzen möchtest, kontaktiere bitte:
-
-📧 **rolf_greger@web.de**
+- Kommerzielle Lizenzen auf Anfrage: **rolf_greger@web.de**
 
 ---
 
-## Ethik & KI-Einsatz
+## Status
 
-Kids-Control verwendet KI-unterstützte Entscheidungslogik.  
-Es findet **keine Überwachung**, **keine Inhaltsanalyse**  
-und **kein Verhaltensprofiling** statt.
+**v1.1 – Setup für Server und Clients**
 
----
-
----
-
-
-## 🇬🇧 English
-
-**Server-centric parental control system for Linux clients.**  
-This project was created with assistance from ChatGPT 5.2.
-
----
-
-## Project Status
-
-Current version: **v0.5 – Server Baseline**
-
-The server component is stable, operational, and documented.  
-Client implementations will follow in later versions.
-
----
-
-## Core Principles
-
-- The server is the *source of truth*
-- Explainability over black-box behavior
-- Control instead of surveillance
-- Stability before features
-
----
-
-## Documentation
-
-See the `docs/` directory:
-
-- ARCHITECTURE.md
-- DATABASE.md
-- SERVER_SETUP.md
-- STATUS_v0.5.md
-
----
-
-## Notice
-
-This repository contains **no secrets**, **no databases**,  
-and **no production-ready client scripts**.
-
----
-
-## Licensing
-
-Kids-Control is provided under a **dual licensing model**:
-
-- Open Source: **GPL-3.0-or-later**
-- Commercial licenses available upon request
-
-If you intend to use Kids-Control in a proprietary, commercial,  
-or hosted environment, please contact:
-
-📧 **rolf_greger@web.de**
-
----
-
-## Ethics & AI Usage
-
-Kids-Control uses AI-assisted decision logic.  
-It does **not** perform surveillance, content inspection,  
-or behavioral profiling.
+Eltern-Hub, Zeitregeln, App-Sperren, Softwarestände, optionales SSH und ein Setup mit getrenntem Client-Passwort.

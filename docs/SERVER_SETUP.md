@@ -1,100 +1,58 @@
 # KidsControl – Server Setup
 
-Version: v0.5
+Version: v1.1
 
-## Installationspfad
+## Voraussetzungen
 
-/opt/kids-control
+Siehe README, Abschnitt Systemvoraussetzungen.
 
-markdown
-Code kopieren
+- Python 3.10+
+- Port 8000 (oder ein anderer freier TCP-Port) im Heimnetz erreichbar
 
-## Benutzer & Rechte
+## Einrichtung
 
-- dedizierter Benutzer: `gregerr`
-- keine Root-Ausführung der App
-- Root nur für:
-  - Installation
-  - systemd
-  - Firewall
-
-## Python-Umgebung
-
-- Python venv unter:
-/opt/kids-control/.venv
-
-bash
-Code kopieren
-
-- Start & Tests erfolgen explizit über die venv
-
-Beispiel:
 ```bash
-sudo -u gregerr /opt/kids-control/.venv/bin/python
-Start via systemd
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m app.setup
+```
 
-systemd-Service ist vorhanden
+`python -m app.setup` fragt ab:
 
-startet nach Netzwerk
+- Eltern-Benutzername und Eltern-Passwort (Web-Login)
+- Client-Setup-Passwort (nur für `kidscontrol_agent.setup` auf den Kinder-PCs)
 
-kein AD-Zwang beim Start
+Beide Passwörter mindestens 8 Zeichen und nicht gleich. Die Datei `data/server.env` wird mit Rechten `0600` geschrieben.
 
-Ziel:
+Nicht-interaktiv:
 
-Server muss starten können, auch wenn Infrastruktur verzögert ist.
+```bash
+python -m app.setup \
+  --admin-user admin \
+  --admin-password 'eltern-geheim' \
+  --setup-password 'client-geheim'
+```
 
-Logging
+Zum Überschreiben: `--force`.
 
-Logs gehen aktuell an stdout/systemd
+Alternativ richtet der erste Browser-Aufruf denselben Schritt ein (`/setup`). Danach den Prozess neu starten.
 
-Erweiterte Audit-Logs liegen in der Datenbank
+## Start
 
-Philosophie
+```bash
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
 
-explizite Pfade
+systemd lädt dieselbe Datei, siehe `systemd/kids-control.service`.
 
-keine Magie
+## Danach in der UI
 
-kein „läuft schon irgendwie“
+1. Mit dem Eltern-Passwort anmelden
+2. Kind anlegen
+3. Zeitplan, App-Sperren, beobachtete Software setzen
+4. Kinder-PCs mit dem Client-Setup-Passwort einrichten (`docs/CLIENT.md`)
 
-Das System soll debugbar bleiben.
+## Healthcheck
 
-
-# KidsControl – Status v0.5
-
-## Was funktioniert
-
-- Server startet stabil
-- Web-UI ist erreichbar
-- Datenbank ist angebunden
-- ORM-Modelle sind konsistent
-- Audit- und Entscheidungslogik existiert
-
-## Was bewusst fehlt
-
-- produktive Clients
-- Tray-Anwendung
-- Offline-Cache
-- Benutzerfreundliche Installer
-
-## Was nicht kaputt ist
-
-- Kerberos ist kein Blocker
-- AD ist keine Pflicht
-- SQLite ist kein Provisorium
-- Architektur ist konsistent
-
-## Bekannte technische Schulden
-
-- keine Migrationen
-- kein Schema-Versionsmanagement
-- keine API-Versionierung
-
-Diese Punkte sind bekannt und akzeptiert.
-
-## Ziel dieses Status
-
-Dieser Stand ist ein **stabiler Fixpunkt**.
-Alle weiteren Entwicklungen bauen darauf auf oder ändern ihn bewusst.
-
-> v0.5 ist kein Prototyp – es ist ein Fundament.
+`GET /healthz` → `{"ok": true, "configured": true, ...}`
