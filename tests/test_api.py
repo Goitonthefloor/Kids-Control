@@ -328,6 +328,61 @@ def test_openssh_plan():
     assert openssh_install_plan("macos", {"apt-get"}) == []
 
 
+def test_oneclick_installer_and_agent_archive(client):
+    import io
+    import tarfile
+    import zipfile
+
+    anon = client.get("/ui/child/noah/oneclick/linux", follow_redirects=False)
+    assert anon.status_code == 302
+    assert anon.headers["location"] == "/login"
+
+    login(client)
+    created = client.post("/ui/children/add", data={"display_name": "Noah"}, follow_redirects=False)
+    assert created.status_code == 302
+    page = client.get("/ui/child/noah")
+    assert "/ui/child/noah/oneclick/linux" in page.text
+    assert "/ui/child/noah/oneclick/windows" in page.text
+
+    db = SessionLocal()
+    try:
+        token = db.query(Child).filter_by(slug="noah").one().enroll_token
+    finally:
+        db.close()
+
+    linux = client.get("/ui/child/noah/oneclick/linux")
+    assert linux.status_code == 200
+    assert 'filename="kidscontrol-setup.sh"' in linux.headers["content-disposition"]
+    assert token in linux.text
+    assert "kidscontrol_agent.setup" in linux.text
+    assert "/setup/agent.tgz" in linux.text
+    assert "systemctl enable --now kidscontrol-agent" in linux.text
+
+    macos = client.get("/ui/child/noah/oneclick/macos")
+    assert 'filename="kidscontrol-setup.command"' in macos.headers["content-disposition"]
+    assert token in macos.text
+    assert "systemctl" not in macos.text
+
+    windows = client.get("/ui/child/noah/oneclick/windows")
+    assert 'filename="kidscontrol-setup.cmd"' in windows.headers["content-disposition"]
+    assert token in windows.text
+    assert "/setup/agent.zip" in windows.text
+    assert "\r\n" in windows.text
+
+    missing = client.get("/ui/child/noah/oneclick/android")
+    assert missing.status_code == 404
+
+    tgz = client.get("/setup/agent.tgz")
+    assert tgz.status_code == 200
+    with tarfile.open(fileobj=io.BytesIO(tgz.content), mode="r:gz") as archive:
+        assert "kidscontrol_agent/__init__.py" in archive.getnames()
+
+    packed = client.get("/setup/agent.zip")
+    assert packed.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(packed.content)) as archive:
+        assert "kidscontrol_agent/setup.py" in archive.namelist()
+
+
 def test_process_match_helper():
     from kidscontrol_agent.enforce import matches_rule
 

@@ -48,7 +48,15 @@ Nicht nötig: Active Directory, Docker, dieselbe Distribution auf allen Rechnern
 
 ## Einrichtung
 
-### 1. Server
+Version **1.2.0**.
+
+### 1. Server mit einem Klick
+
+Linux und macOS: `./setup-server.sh` (macOS auch per Doppelklick auf `setup-server.command`). Windows: `setup-server.cmd` doppelklicken.
+
+Das Skript legt die virtuelle Umgebung an, installiert die Abhängigkeiten, startet den Hub auf Port 8000 und öffnet den Browser. Beim ersten Start die Einrichtung im Browser abschließen (Eltern-Passwort und Client-Setup-Passwort). Danach den Prozess neu starten, damit `data/server.env` gilt.
+
+Manuell, falls kein Doppelklick möglich ist:
 
 ```bash
 python3 -m venv .venv
@@ -58,25 +66,28 @@ python -m app.setup
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Ohne CLI-Setup zeigt der erste Browser-Aufruf dieselbe Einrichtung. Die Datei `data/server.env` nicht ins Git legen.
+Die Datei `data/server.env` nicht ins Git legen.
 
 Es gibt zwei Server-Passwörter:
 
 - **Eltern-Passwort** – Login in der Web-Oberfläche
 - **Client-Setup-Passwort** – nur für die Ersteinrichtung des Servers, nicht für jeden Kinder-PC
 
-### 2. Kind und Client in einem Schritt
+### 2. Kind und Client mit einem Klick
 
 1. Anmelden und nur den Namen des Kindes eintragen.
-2. Die Kind-Seite zeigt **einen Befehl**. Den auf dem Kinder-PC im Ordner `client` ausführen:
+2. Auf der Kind-Seite **Linux**, **macOS** oder **Windows** herunterladen. Server-Adresse und Einrichtungs-Code stecken in der Datei.
+3. Auf dem Kinder-PC ausführen:
+   - Linux und macOS: `bash kidscontrol-setup.sh` (macOS-Datei: `kidscontrol-setup.command`)
+   - Windows: `kidscontrol-setup.cmd` doppelklicken
+
+Das Skript installiert Python 3, falls es fehlt, lädt den Agenten vom Hub und richtet ihn ein. Unter Linux als root wird zusätzlich der Dienst `kidscontrol-agent` aktiviert. OpenSSH kommt über apt, dnf oder pacman, der SSH-Schlüssel wird erzeugt und der private Teil an den Server übertragen. Danach steht das Gerät in der Eltern-UI.
+
+Wer den Agenten schon im Ordner `client` hat, kann denselben Schritt von Hand starten:
 
 ```bash
 python -m kidscontrol_agent.setup --server http://IP-DES-SERVERS:8000 --token CODE
 ```
-
-Der Client erkennt das Betriebssystem. Unter Linux installiert er OpenSSH mit dem Paketmanager, erzeugt einen SSH-Schlüssel, legt den öffentlichen Teil in `authorized_keys` und überträgt den privaten Schlüssel an den Server. Danach steht das Gerät in der Eltern-UI, SSH ist für Linux aktiv.
-
-Linux-Dienst: `sudo ./install-linux.sh`, danach denselben Befehl mit `--out /etc/kidscontrol/client.env`.
 
 ## Dokumentation
 
@@ -136,7 +147,15 @@ Not required: Active Directory, Docker, or the same distribution on every machin
 
 ## Setup
 
-### 1. Server
+Version **1.2.0**.
+
+### 1. One-click server
+
+Linux and macOS: `./setup-server.sh` (on macOS, double-click `setup-server.command` as well). Windows: double-click `setup-server.cmd`.
+
+The script creates the virtualenv, installs dependencies, starts the hub on port 8000, and opens a browser. On the first start, finish setup in the browser (parent password and client setup password). Restart the process afterwards so `data/server.env` is picked up.
+
+Manual start, if a double-click is not possible:
 
 ```bash
 python3 -m venv .venv
@@ -146,25 +165,28 @@ python -m app.setup
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Without the CLI, the first browser visit shows the same setup. Do not commit `data/server.env`.
+Do not commit `data/server.env`.
 
 Two server passwords:
 
 - **Parent password** – signs in to the web UI
 - **Client setup password** – only for the first server setup, not for every child PC
 
-### 2. Child and client in one step
+### 2. One-click child and client
 
 1. Sign in and enter only the child's name.
-2. The child page shows **one command**. Run it on the child PC inside the `client` folder:
+2. On the child page, download **Linux**, **macOS**, or **Windows**. The file already contains the server address and the enrollment code.
+3. On the child PC:
+   - Linux and macOS: `bash kidscontrol-setup.sh` (macOS file: `kidscontrol-setup.command`)
+   - Windows: double-click `kidscontrol-setup.cmd`
+
+The script installs Python 3 when it is missing, downloads the agent from the hub, and enrolls the PC. On Linux as root it also enables the `kidscontrol-agent` service. OpenSSH is installed with apt, dnf, or pacman; the SSH key is created and the private key is sent to the server. The device then shows up in the parent UI.
+
+If the agent is already in the `client` folder, the same step can be started by hand:
 
 ```bash
 python -m kidscontrol_agent.setup --server http://SERVER-IP:8000 --token CODE
 ```
-
-The client detects the OS. On Linux it installs OpenSSH with the package manager, creates an SSH key, puts the public key in `authorized_keys`, and sends the private key to the server. The device then shows up in the parent UI, with SSH enabled for Linux.
-
-Linux service: `sudo ./install-linux.sh`, then the same command with `--out /etc/kidscontrol/client.env`.
 
 ## Documentation
 

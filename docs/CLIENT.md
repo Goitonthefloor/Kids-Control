@@ -1,8 +1,18 @@
 # KidsControl – Client Agent
 
-Version: v1.0
+Version: v1.2.0
 
 Der Agent läuft auf dem Kinder-PC und holt Regeln vom zentralen Server.
+
+## One-Click
+
+Auf der Kind-Seite die passende Datei herunterladen und auf dem Kinder-PC starten:
+
+- Linux: `bash kidscontrol-setup.sh`
+- macOS: `bash kidscontrol-setup.command`
+- Windows: `kidscontrol-setup.cmd` doppelklicken
+
+Die Datei enthält Server-Adresse und Token. Sie lädt den Agenten von `/setup/agent.tgz` bzw. `/setup/agent.zip`, installiert Python falls nötig und ruft `kidscontrol_agent.setup` auf. Unter Linux als root wird der systemd-Dienst `kidscontrol-agent` eingerichtet.
 
 ## Einrichtung
 
