@@ -1,67 +1,80 @@
+-- KidsControl schema reference (v1.0)
+-- Authoritative creation is via SQLAlchemy app.db.init_db()
+
 CREATE TABLE children (
-	id INTEGER NOT NULL, 
-	username VARCHAR NOT NULL, 
-	display_name VARCHAR NOT NULL, 
-	PRIMARY KEY (id), 
-	UNIQUE (username)
+  id INTEGER PRIMARY KEY,
+  slug VARCHAR NOT NULL UNIQUE,
+  display_name VARCHAR NOT NULL,
+  timezone VARCHAR NOT NULL,
+  active BOOLEAN NOT NULL,
+  warn_minutes INTEGER NOT NULL,
+  created_at DATETIME NOT NULL
 );
+
+CREATE TABLE devices (
+  id INTEGER PRIMARY KEY,
+  child_id INTEGER NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+  name VARCHAR NOT NULL,
+  device_key VARCHAR NOT NULL UNIQUE,
+  os_family VARCHAR NOT NULL,
+  hostname VARCHAR,
+  last_seen_at DATETIME,
+  created_at DATETIME NOT NULL
+);
+
 CREATE TABLE schedules (
-	id INTEGER NOT NULL, 
-	username VARCHAR NOT NULL, 
-	weekday INTEGER NOT NULL, 
-	start_min INTEGER NOT NULL, 
-	end_min INTEGER NOT NULL, 
-	daily_minutes INTEGER NOT NULL, 
-	PRIMARY KEY (id), 
-	CONSTRAINT uq_schedule_user_weekday UNIQUE (username, weekday)
+  id INTEGER PRIMARY KEY,
+  child_id INTEGER NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+  weekday INTEGER NOT NULL,
+  start_min INTEGER NOT NULL,
+  end_min INTEGER NOT NULL,
+  daily_minutes INTEGER NOT NULL,
+  CONSTRAINT uq_schedule_child_weekday UNIQUE (child_id, weekday)
 );
+
+CREATE TABLE app_rules (
+  id INTEGER PRIMARY KEY,
+  child_id INTEGER NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+  label VARCHAR NOT NULL,
+  pattern VARCHAR NOT NULL,
+  match_mode VARCHAR NOT NULL,
+  enabled BOOLEAN NOT NULL,
+  scope VARCHAR NOT NULL,
+  created_at DATETIME NOT NULL
+);
+
 CREATE TABLE overrides (
-	id INTEGER NOT NULL, 
-	username VARCHAR NOT NULL, 
-	grant_until DATETIME NOT NULL, 
-	grant_type VARCHAR NOT NULL, 
-	created_by VARCHAR NOT NULL, 
-	created_at DATETIME NOT NULL, 
-	PRIMARY KEY (id)
+  id INTEGER PRIMARY KEY,
+  child_id INTEGER NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+  grant_until DATETIME NOT NULL,
+  grant_type VARCHAR NOT NULL,
+  created_by VARCHAR NOT NULL,
+  created_at DATETIME NOT NULL
 );
-CREATE TABLE audit_log (
-	id INTEGER NOT NULL, 
-	at DATETIME NOT NULL, 
-	actor VARCHAR NOT NULL, 
-	child VARCHAR, 
-	action VARCHAR NOT NULL, 
-	details VARCHAR, 
-	PRIMARY KEY (id)
-);
-CREATE TABLE child_policy (
-	username VARCHAR NOT NULL, 
-	after_expiry_mode VARCHAR NOT NULL, 
-	hard_lock BOOLEAN NOT NULL, 
-	warn_minutes INTEGER NOT NULL, 
-	PRIMARY KEY (username)
-);
-CREATE TABLE prewarn_log (
-	id INTEGER NOT NULL, 
-	username VARCHAR NOT NULL, 
-	day VARCHAR NOT NULL, 
-	mode VARCHAR NOT NULL, 
-	shown_at VARCHAR NOT NULL, 
-	PRIMARY KEY (id), 
-	CONSTRAINT uq_prewarn_user_day_mode UNIQUE (username, day, mode)
-);
-CREATE TABLE daily_usage (
-	id INTEGER NOT NULL, 
-	username VARCHAR NOT NULL, 
-	day VARCHAR NOT NULL, 
-	used_minutes INTEGER NOT NULL, 
-	last_seen_at DATETIME NOT NULL, 
-	PRIMARY KEY (id), 
-	CONSTRAINT uq_daily_usage_user_day UNIQUE (username, day)
-);
+
 CREATE TABLE day_overrides (
-	username VARCHAR NOT NULL, 
-	day VARCHAR NOT NULL, 
-	enabled BOOLEAN NOT NULL, 
-	updated_at DATETIME NOT NULL, 
-	PRIMARY KEY (username)
+  id INTEGER PRIMARY KEY,
+  child_id INTEGER NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+  day VARCHAR NOT NULL,
+  enabled BOOLEAN NOT NULL,
+  updated_at DATETIME NOT NULL,
+  CONSTRAINT uq_day_override_child_day UNIQUE (child_id, day)
+);
+
+CREATE TABLE daily_usage (
+  id INTEGER PRIMARY KEY,
+  child_id INTEGER NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+  day VARCHAR NOT NULL,
+  used_minutes INTEGER NOT NULL,
+  last_seen_at DATETIME NOT NULL,
+  CONSTRAINT uq_daily_usage_child_day UNIQUE (child_id, day)
+);
+
+CREATE TABLE audit_log (
+  id INTEGER PRIMARY KEY,
+  at DATETIME NOT NULL,
+  actor VARCHAR NOT NULL,
+  child_slug VARCHAR,
+  action VARCHAR NOT NULL,
+  details VARCHAR
 );

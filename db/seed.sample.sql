@@ -1,4 +1,3 @@
--- Example seed data (ANONYMIZED TEMPLATE)
--- Use only for dev/test. Do not include real names.
-
--- INSERT INTO children (...) VALUES (...);
+-- Example seed (anonymized). Prefer creating data via the parent UI.
+-- INSERT INTO children (slug, display_name, timezone, active, warn_minutes, created_at)
+-- VALUES ('child1', 'Kind 1', 'Europe/Berlin', 1, 10, CURRENT_TIMESTAMP);

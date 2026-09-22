@@ -1,100 +1,43 @@
 # KidsControl – Server Setup
 
-Version: v0.5
+Version: v1.0
 
-## Installationspfad
+## Voraussetzungen
 
-/opt/kids-control
+- Python 3.10+
+- Netzwerk-Erreichbarkeit für Agenten (Port 8000 oder Reverse-Proxy)
 
-markdown
-Code kopieren
+## Installation
 
-## Benutzer & Rechte
-
-- dedizierter Benutzer: `gregerr`
-- keine Root-Ausführung der App
-- Root nur für:
-  - Installation
-  - systemd
-  - Firewall
-
-## Python-Umgebung
-
-- Python venv unter:
-/opt/kids-control/.venv
-
-bash
-Code kopieren
-
-- Start & Tests erfolgen explizit über die venv
-
-Beispiel:
 ```bash
-sudo -u gregerr /opt/kids-control/.venv/bin/python
-Start via systemd
+git clone <repo> kids-control
+cd kids-control
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+# Passwort und Secret setzen
+```
 
-systemd-Service ist vorhanden
+## Start
 
-startet nach Netzwerk
+```bash
+export $(grep -v '^#' .env | xargs)
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
 
-kein AD-Zwang beim Start
+Oder systemd: siehe `systemd/kids-control.service`  
+`WorkingDirectory` und Pfade an die Installation anpassen. Datenverzeichnis muss schreibbar sein (`ReadWritePaths`).
 
-Ziel:
+## Erste Schritte in der UI
 
-Server muss starten können, auch wenn Infrastruktur verzögert ist.
+1. Einloggen  
+2. Kind anlegen  
+3. Zeitplan prüfen/anpassen  
+4. App-Sperren setzen  
+5. Gerät anlegen und **Device-Key** notieren  
+6. Agent auf dem Kinder-PC mit diesem Key starten  
 
-Logging
+## Healthcheck
 
-Logs gehen aktuell an stdout/systemd
-
-Erweiterte Audit-Logs liegen in der Datenbank
-
-Philosophie
-
-explizite Pfade
-
-keine Magie
-
-kein „läuft schon irgendwie“
-
-Das System soll debugbar bleiben.
-
-
-# KidsControl – Status v0.5
-
-## Was funktioniert
-
-- Server startet stabil
-- Web-UI ist erreichbar
-- Datenbank ist angebunden
-- ORM-Modelle sind konsistent
-- Audit- und Entscheidungslogik existiert
-
-## Was bewusst fehlt
-
-- produktive Clients
-- Tray-Anwendung
-- Offline-Cache
-- Benutzerfreundliche Installer
-
-## Was nicht kaputt ist
-
-- Kerberos ist kein Blocker
-- AD ist keine Pflicht
-- SQLite ist kein Provisorium
-- Architektur ist konsistent
-
-## Bekannte technische Schulden
-
-- keine Migrationen
-- kein Schema-Versionsmanagement
-- keine API-Versionierung
-
-Diese Punkte sind bekannt und akzeptiert.
-
-## Ziel dieses Status
-
-Dieser Stand ist ein **stabiler Fixpunkt**.
-Alle weiteren Entwicklungen bauen darauf auf oder ändern ihn bewusst.
-
-> v0.5 ist kein Prototyp – es ist ein Fundament.
+`GET /healthz` → `{"ok": true, ...}`

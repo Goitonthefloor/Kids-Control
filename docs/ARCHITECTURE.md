@@ -1,62 +1,62 @@
 # KidsControl – Architektur
 
-Version: v0.5  
-Stand: Server-seitig stabil
+Version: v1.0  
+Fokus: zentraler Hub, OS-unabhängige Durchsetzung
 
 ## Zielbild
 
-KidsControl ist eine **server-zentrierte Kindersicherungs-Lösung** für Linux-Clients.
-Der Server trifft Entscheidungen, Clients setzen sie durch.
+KidsControl ist die **zentrale Schaltstelle** für Eltern:
 
-Der Server ist die **einzige Quelle der Wahrheit**.
+- Nutzungszeit von Kinder-PCs regeln (Zeitfenster + Tagesbudget)
+- Ausgewählte Apps/Prozesse unterbinden
+- Regeln einmal pflegen, auf **Windows, macOS und Linux** durchsetzen
 
-## Grundannahmen
+Der Server ist die **einzige Quelle der Wahrheit**. Clients treffen keine eigenen Regeln.
 
-- Linux-Clients (Ubuntu, CachyOS, Bazzite)
-- Zentrale Verwaltung
-- Manipulationsresistenz durch Server-Autorität
-- Keine Spyware, keine Inhaltsanalyse
+## Komponenten
 
-## Rollen
+### 1. Server (Eltern-Hub)
 
-### Server (ChildControl)
+- FastAPI + SQLite
+- Web-UI für Kinder, Zeitpläne, App-Sperren, Geräte, Overrides
+- Agent-API (`/api/v1/agent/sync`) mit Device-Key-Auth
+- Audit-Protokoll elterlicher Aktionen
 
-- hält alle Regeln und Zeitpläne
-- entscheidet:
-  - erlaubt
-  - vorwarnen
-  - blockieren
-- protokolliert Entscheidungen nachvollziehbar
-- kennt Kinder, nicht Benutzerkonten
+### 2. Agent (Kinder-PC)
 
-### Client
+- Läuft lokal als Dienst/Prozess
+- Pollt den Server periodisch
+- Meldet Hostname/OS und aktive Sitzung
+- Setzt lokal durch:
+  - Sitzung sperren, wenn Zeit abgelaufen
+  - Gesperrte Apps beenden (Prozessnamen-Muster)
+  - Vorwarnungen anzeigen
 
-- fragt Regeln ab
-- setzt Entscheidungen lokal durch
-- speichert minimalen Cache (zukünftig)
-- trifft **keine eigenen Regeln**
+### 3. Geräte
 
-## Active Directory / Domain
+Jedes Kinder-Gerät erhält einen geheimen **Device-Key**.  
+Der Key bindet das Gerät an genau ein Kind-Profil.
 
-- AD-Integration ist **optional**
-- Der Server selbst ist **nicht** AD-abhängig
-- Clients können AD-Informationen nutzen (z. B. Benutzername → Kind)
-- Kein hartes Vertrauen in Kerberos zur Laufzeit
+## Entscheidungsreihenfolge (Sitzung)
 
-## Kommunikationsprinzip
+1. Kind deaktiviert? → sperren  
+2. Tages-Override („Heute unbegrenzt“)? → erlauben  
+3. Aktive Stunden-Freigabe (+1h)? → erlauben  
+4. Kein Zeitplan / außerhalb Fenster / 0 Minuten? → sperren  
+5. Tagesbudget aufgebraucht? → sperren  
+6. Sonst erlauben (optional Vorwarnung)
 
-- Client → Server (pull)
-- Server → Client (keine Push-Abhängigkeit)
-- Offline-Szenarien werden später berücksichtigt
+**App-Sperren** gelten zusätzlich (Scope `always`) auch während erlaubter Nutzungszeit.
 
 ## Nicht-Ziele
 
-- keine Inhaltsfilterung
+- keine Inhaltsfilterung / Web-Proxy-Pflicht
 - kein Keylogging
 - keine Bildschirmüberwachung
-- keine Umgehung elterlicher Verantwortung
+- kein Verhaltensprofiling
 
-## Fazit
+## Kommunikation
 
-KidsControl priorisiert **Erklärbarkeit, Stabilität und Kontrolle**  
-über aggressive Durchsetzung oder technische Spielereien.
+- Client → Server (Pull)
+- Keine Push-Abhängigkeit
+- Offline: Agent kann zuletzt bekannte Sperr-Policy hart halten (Erweiterung); v1.0 erfordert Erreichbarkeit für Freigaben

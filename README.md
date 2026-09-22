@@ -1,151 +1,92 @@
----
+# KidsControl
 
-<img width="1169" height="301" alt="image" src="https://github.com/user-attachments/assets/ff45f0e2-d5b8-4064-84d9-bd1d6edf293f" />
+**Zentraler Anlaufpunkt** für Eltern: Nutzungszeit der Kinder-PCs steuern und App-Aufrufe unterbinden – **unabhängig vom Betriebssystem** (Windows, macOS, Linux).
 
----
-
-<img width="1469" height="347" alt="image" src="https://github.com/user-attachments/assets/44e4cd70-dc0e-4d5e-85fd-2b5c6c8da99e" />
+Dieses Projekt wurde mit Unterstützung von KI erstellt.
 
 ---
 
-<img width="1560" height="784" alt="image" src="https://github.com/user-attachments/assets/f2c3fe41-8a28-4224-85c0-f3e946b21a11" />
+## Was KidsControl macht
+
+1. **Eltern-Hub (Server)** – Web-UI + API als einzige Quelle der Wahrheit  
+2. **Agent auf jedem Kinder-PC** – holt Regeln vom Server und setzt sie lokal durch  
+3. **Nutzungszeit** – Wochentags-Fenster, Tagesminuten, +1h / „Heute unbegrenzt“  
+4. **App-Sperren** – Prozesse nach Namen/Muster beenden (z.B. `minecraft`, `steam`, `RobloxPlayerBeta.exe`)
+
+Keine Inhaltsanalyse, kein Keylogging, keine Bildschirmüberwachung.
 
 ---
 
-<img width="1538" height="628" alt="image" src="https://github.com/user-attachments/assets/4b2a8a26-9b7a-4fc5-83d2-6805dd5d75d4" />
+## Architektur
+
+```
+Eltern-Browser ──► KidsControl Server (FastAPI + SQLite)
+                         ▲
+                         │ HTTPS/HTTP Poll (Device-Key)
+           ┌─────────────┼─────────────┐
+           │             │             │
+      Agent Win     Agent macOS    Agent Linux
+```
+
+Der Server entscheidet. Der Agent führt aus (Sitzung sperren, Apps beenden, Nutzung melden).
 
 ---
 
+## Schnellstart (Server)
 
-# Kids-Control
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 
-## 🇩🇪 Deutsch
+export KIDSCONTROL_ADMIN_USER=admin
+export KIDSCONTROL_ADMIN_PASSWORD=geheim
+export KIDSCONTROL_SECRET=$(python -c 'import secrets;print(secrets.token_urlsafe(32))')
 
-**Server-zentrierte Kindersicherung für Linux-Clients.**  
-Dieses Projekt wurde mit Unterstützung von ChatGPT 5.2 erstellt.
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Öffne http://127.0.0.1:8000 → Login → Kind anlegen → Gerät anlegen → Device-Key kopieren.
 
 ---
 
-## Projektstatus
+## Agent auf dem Kinder-PC
 
-Aktueller Stand: **v0.5 – Server-Baseline**
+```bash
+# client.env (siehe client/client.env.example)
+KIDSCONTROL_SERVER=http://IP-DES-SERVERS:8000
+KIDSCONTROL_DEVICE_KEY=...aus-der-eltern-ui...
 
-Der Server ist stabil, lauffähig und dokumentiert.  
-Client-Implementierungen folgen in späteren Versionen.
+cd client
+python -m kidscontrol_agent --env /pfad/zu/client.env
+# Testlauf ohne Sperren:
+KIDSCONTROL_DRY_RUN=1 python -m kidscontrol_agent --once --env /pfad/zu/client.env
+```
 
----
-
-## Leitprinzipien
-
-- Der Server ist die *Source of Truth*
-- Erklärbarkeit statt Blackbox
-- Kontrolle statt Überwachung
-- Stabilität vor Features
+Der Agent läuft unter Windows, macOS und Linux mit denselben Regeln.
 
 ---
 
 ## Dokumentation
 
-Siehe das Verzeichnis `docs/`:
-
-- ARCHITECTURE.md
-- DATABASE.md
-- SERVER_SETUP.md
-- STATUS_v0.5.md
-
----
-
-## Hinweis
-
-Dieses Repository enthält **keine Secrets**, **keine Datenbank**  
-und **keine produktiven Client-Skripte**.
+- `docs/ARCHITECTURE.md` – Zielbild und Komponenten  
+- `docs/DATABASE.md` – Datenmodell  
+- `docs/SERVER_SETUP.md` – Installation  
+- `docs/CLIENT.md` – Agent-Setup je OS  
 
 ---
 
 ## Lizenzierung
 
-Kids-Control wird als **Dual-Licensing-Projekt** bereitgestellt:
+Dual Licensing:
 
 - Open Source: **GPL-3.0-or-later**
-- Kommerzielle Lizenzen auf Anfrage verfügbar
-
-Wenn du Kids-Control in einer proprietären, kommerziellen  
-oder gehosteten Umgebung einsetzen möchtest, kontaktiere bitte:
-
-📧 **rolf_greger@web.de**
+- Kommerzielle Lizenzen auf Anfrage: **rolf_greger@web.de**
 
 ---
 
-## Ethik & KI-Einsatz
+## Status
 
-Kids-Control verwendet KI-unterstützte Entscheidungslogik.  
-Es findet **keine Überwachung**, **keine Inhaltsanalyse**  
-und **kein Verhaltensprofiling** statt.
+**v1.0 – Cross-Platform Hub**
 
----
-
----
-
-
-## 🇬🇧 English
-
-**Server-centric parental control system for Linux clients.**  
-This project was created with assistance from ChatGPT 5.2.
-
----
-
-## Project Status
-
-Current version: **v0.5 – Server Baseline**
-
-The server component is stable, operational, and documented.  
-Client implementations will follow in later versions.
-
----
-
-## Core Principles
-
-- The server is the *source of truth*
-- Explainability over black-box behavior
-- Control instead of surveillance
-- Stability before features
-
----
-
-## Documentation
-
-See the `docs/` directory:
-
-- ARCHITECTURE.md
-- DATABASE.md
-- SERVER_SETUP.md
-- STATUS_v0.5.md
-
----
-
-## Notice
-
-This repository contains **no secrets**, **no databases**,  
-and **no production-ready client scripts**.
-
----
-
-## Licensing
-
-Kids-Control is provided under a **dual licensing model**:
-
-- Open Source: **GPL-3.0-or-later**
-- Commercial licenses available upon request
-
-If you intend to use Kids-Control in a proprietary, commercial,  
-or hosted environment, please contact:
-
-📧 **rolf_greger@web.de**
-
----
-
-## Ethics & AI Usage
-
-Kids-Control uses AI-assisted decision logic.  
-It does **not** perform surveillance, content inspection,  
-or behavioral profiling.
+Server-UI, Policy-Engine, App-Sperren, Geräte-API und Cross-Platform-Agent sind enthalten.

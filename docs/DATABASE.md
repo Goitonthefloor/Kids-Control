@@ -1,53 +1,35 @@
-# KidsControl – Datenbank & ORM
+# KidsControl – Datenmodell
 
-Version: v0.5
+Version: v1.0
 
-## Überblick
+## Speicher
 
-KidsControl verwendet **SQLAlchemy ORM** als primäre Datenbank-Schnittstelle.
-Die Datenbank ist aktuell **SQLite**.
+Standard: SQLite unter `./data/kidscontrol.sqlite3`  
+(überschreibbar mit `KIDSCONTROL_DATA_DIR` oder `DATABASE_URL`)
 
-Das ORM ist maßgeblich – nicht das rohe SQLite-Schema.
+Initialisierung ausschließlich über SQLAlchemy (`init_db()`).
 
-## Aktueller Speicherort
-/opt/kids-control/app/data/kidscontrol.sqlite3
+## Tabellen
 
-## Tabellen (ORM-Sicht)
+| Tabelle | Zweck |
+|---------|--------|
+| `children` | Kind-Profile (slug, Name, Zeitzone, Vorwarnung) |
+| `devices` | Registrierte PCs + Device-Key + OS |
+| `schedules` | Pro Kind und Wochentag: Start/Ende/Tagesminuten |
+| `app_rules` | App-/Prozess-Sperren (Muster, Match-Modus, Scope) |
+| `overrides` | Zeitlich befristete Freigaben (+1h) |
+| `day_overrides` | „Heute unbegrenzt“ |
+| `daily_usage` | Verbrauchte Minuten je lokalem Tag |
+| `audit_log` | Nachvollziehbare Eltern-Aktionen |
 
-- children
-- schedules
-- overrides
-- audit_log
-- prewarn_log
+## App-Regeln
 
-## Wichtige Erkenntnis
+- `pattern`: z.B. `minecraft`, `steam`, `RobloxPlayerBeta.exe`
+- `match_mode`: `contains` \| `exact` \| `startswith`
+- `scope`: `always` \| `when_denied`
 
-Es gab einen Debug-Fall, bei dem:
+Matching ist absichtlich OS-agnostisch (Prozess-/Dateiname).
 
-- SQLAlchemy alle Tabellen kannte
-- `sqlite3 .tables` jedoch nicht alle anzeigte
+## ORM
 
-### Ursache
-
-- Datenbank-Datei existierte
-- Initialisierung/Migration wurde nicht sauber ausgeführt
-
-### Lehre
-
-> **ORM-Metadaten sind die Wahrheit.**  
-> SQLite-Tools zeigen nur den aktuellen physischen Zustand.
-
-## Konsequenzen
-
-- Tabellen dürfen **nicht manuell** in SQLite erstellt werden
-- Initialisierung erfolgt ausschließlich über SQLAlchemy
-- Migrationslogik wird später ergänzt
-
-## Warum SQLite?
-
-- Einfach
-- Robust
-- Kein zusätzlicher Dienst
-- Vollständig ausreichend für Heim- und kleine Domänen
-
-Ein späterer Wechsel zu PostgreSQL ist vorgesehen, aber **kein Ziel von v0.5**.
+SQLAlchemy-Modelle in `app/db.py` sind maßgeblich.
