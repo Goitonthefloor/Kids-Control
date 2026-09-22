@@ -72,10 +72,13 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 Die Datei `data/server.env` nicht ins Git legen.
 
-Es gibt zwei Server-Passwörter:
+Drei Geheimnisse, die nicht dasselbe sind:
 
-- **Eltern-Passwort** – Login in der Web-Oberfläche
-- **Client-Setup-Passwort** – nur für die Ersteinrichtung des Servers, nicht für jeden Kinder-PC
+- **Eltern-Passwort** – nur das Login in der Web-Oberfläche.
+- **Client-Setup-Passwort** – einmal für den Server, ein Haus-Passwort. Es ist **nicht** der Code für den Kinder-PC. Du brauchst es nur als Notweg, wenn du `kidscontrol_agent.setup` ohne den Kind-Code startest (`--setup-password` und `--child`).
+- **Einrichtungscode je Kind** – entsteht automatisch, wenn du ein Kind anlegst. Damit (Befehl oder One-Click-Download) richtest du den Kinder-PC ein.
+
+Nach der Einrichtung nutzt der Agent nur noch den Geräte-Schlüssel in `client.env`. Weder Eltern-Passwort noch Client-Setup-Passwort noch der Kind-Code laufen im Alltag mit.
 
 ### 2. Kind und Client mit einem Klick
 
@@ -177,10 +180,13 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 Do not commit `data/server.env`.
 
-Two server passwords:
+Three secrets that are not the same thing:
 
-- **Parent password** – signs in to the web UI
-- **Client setup password** – only for the first server setup, not for every child PC
+- **Parent password** – only the login for the web UI.
+- **Client setup password** – set once for the server, a household password. It is **not** the code for the child PC. You need it only as a fallback if you run `kidscontrol_agent.setup` without the child code (`--setup-password` and `--child`).
+- **Enrollment code per child** – created automatically when you add a child. That is what you use (command or one-click download) to set up the child PC.
+
+After enrollment the agent only uses the device key in `client.env`. Neither the parent password, nor the client setup password, nor the child code is used in daily operation.
 
 ### 2. One-click child and client
 

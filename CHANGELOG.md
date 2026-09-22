@@ -6,6 +6,7 @@
 - One-click client downloads on the child page (Linux, macOS, Windows) with server URL and enrollment token
 - Agent bundles at `/setup/agent.tgz` and `/setup/agent.zip`
 - Linux root install also enables the `kidscontrol-agent` systemd service
+- UI and docs spell out parent password vs household client-setup password vs per-child enrollment code
 
 ## 1.1.0
 

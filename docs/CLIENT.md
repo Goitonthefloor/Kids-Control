@@ -23,7 +23,13 @@ cd client
 python -m kidscontrol_agent.setup --server http://SERVER:8000 --token CODE
 ```
 
-Der Code steht nur auf der Kind-Seite. Unter Linux installiert das Setup OpenSSH (`apt-get`, `dnf` oder `pacman`), erzeugt `~/.config/kidscontrol/ssh/id_ed25519`, trägt den öffentlichen Schlüssel in `~/.ssh/authorized_keys` ein und sendet den privaten Schlüssel an den Server. Der Server speichert ihn unter `data/keys/` und schaltet SSH für das Linux-Gerät an.
+Der Code steht nur auf der Kind-Seite und gilt nur für dieses Kind. Das Client-Setup-Passwort vom Server ist dafür nicht nötig. Unter Linux installiert das Setup OpenSSH (`apt-get`, `dnf` oder `pacman`), erzeugt `~/.config/kidscontrol/ssh/id_ed25519`, trägt den öffentlichen Schlüssel in `~/.ssh/authorized_keys` ein und sendet den privaten Schlüssel an den Server. Der Server speichert ihn unter `data/keys/` und schaltet SSH für das Linux-Gerät an.
+
+Ohne Kind-Code geht derselbe Schritt als Notweg mit dem Client-Setup-Passwort:
+
+```bash
+python -m kidscontrol_agent.setup --server http://SERVER:8000 --setup-password GEHEIM --child mia
+```
 
 ## Setup
 
