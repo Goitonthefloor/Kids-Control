@@ -14,6 +14,7 @@ _tmp = tempfile.mkdtemp(prefix="kidscontrol-test-")
 os.environ["KIDSCONTROL_DATA_DIR"] = _tmp
 os.environ["KIDSCONTROL_ADMIN_USER"] = "admin"
 os.environ["KIDSCONTROL_ADMIN_PASSWORD"] = "secret"
+os.environ["KIDSCONTROL_SETUP_PASSWORD"] = "setup-secret"
 os.environ["KIDSCONTROL_SECRET"] = "test-secret"
 os.environ.pop("DATABASE_URL", None)
 
@@ -178,6 +179,70 @@ def test_inventory_and_update_queue(client):
         assert cmd.status == "done"
     finally:
         db.close()
+
+
+def test_enroll_requires_setup_password(client):
+    login(client)
+    client.post("/ui/children/add", data={"display_name": "Noah", "slug": "noah"}, follow_redirects=False)
+    denied = client.post("/api/v1/setup/enroll", json={"setup_password": "wrong", "child_slug": "noah", "device_name": "PC"})
+    assert denied.status_code == 401
+    ok = client.post(
+        "/api/v1/setup/enroll",
+        json={"setup_password": "setup-secret", "child_slug": "noah", "device_name": "Kinder-PC", "os": "linux"},
+    )
+    assert ok.status_code == 200
+    body = ok.json()
+    assert body["device_key"]
+    assert body["child"]["slug"] == "noah"
+    listed = client.post("/api/v1/setup/children", json={"setup_password": "setup-secret"})
+    assert any(k["slug"] == "noah" for k in listed.json()["children"])
+
+
+def test_setup_page_and_client_env(client, tmp_path):
+    from kidscontrol_agent.setup import write_client_env
+
+    saved = {k: os.environ.get(k) for k in ("KIDSCONTROL_ADMIN_PASSWORD", "KIDSCONTROL_SETUP_PASSWORD", "KIDSCONTROL_ADMIN_USER")}
+    os.environ["KIDSCONTROL_ADMIN_PASSWORD"] = ""
+    os.environ["KIDSCONTROL_SETUP_PASSWORD"] = ""
+    try:
+        assert client.get("/login", follow_redirects=False).headers["location"] == "/setup"
+        short = client.post(
+            "/setup",
+            data={
+                "admin_user": "admin",
+                "admin_password": "short",
+                "admin_password_repeat": "short",
+                "setup_password": "short",
+                "setup_password_repeat": "short",
+                "timezone": "Europe/Berlin",
+            },
+        )
+        assert short.status_code == 400
+        done = client.post(
+            "/setup",
+            data={
+                "admin_user": "eltern",
+                "admin_password": "eltern-pass",
+                "admin_password_repeat": "eltern-pass",
+                "setup_password": "client-setup-pass",
+                "setup_password_repeat": "client-setup-pass",
+                "timezone": "Europe/Berlin",
+            },
+        )
+        assert done.status_code == 200
+        assert "Neu starten" in done.text
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    env_file = tmp_path / "client.env"
+    write_client_env(env_file, server="http://127.0.0.1:8000", device_key="abc", poll_seconds=30)
+    text = env_file.read_text(encoding="utf-8")
+    assert "KIDSCONTROL_DEVICE_KEY=abc" in text
+    assert "KIDSCONTROL_SERVER=http://127.0.0.1:8000" in text
 
 
 def test_process_match_helper():

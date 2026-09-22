@@ -4,6 +4,25 @@ Version: v1.0
 
 Der Agent läuft auf dem Kinder-PC und holt Regeln vom zentralen Server.
 
+## Einrichtung
+
+Voraussetzung: Auf dem Server ist ein Kind angelegt, und du kennst das **Client-Setup-Passwort** aus `python -m app.setup` (nicht das Eltern-Login).
+
+```bash
+cd client
+python -m kidscontrol_agent.setup
+```
+
+Der Setup fragt Server-Adresse, Setup-Passwort, Kind und Gerätename. Er legt am Server ein Gerät an und schreibt `client.env` mit dem Device-Key.
+
+Linux als Dienst:
+
+```bash
+sudo ./install-linux.sh
+sudo PYTHONPATH=/opt/kidscontrol-client python3 -m kidscontrol_agent.setup --out /etc/kidscontrol/client.env
+sudo systemctl enable --now kidscontrol-agent
+```
+
 ## Konfiguration
 
 Datei `client.env` (Beispiel: `client/client.env.example`):

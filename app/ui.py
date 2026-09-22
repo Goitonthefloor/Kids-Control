@@ -131,6 +131,58 @@ def _shell(title: str, subtitle: str, body: str, *, nav: str = "", flash: str | 
 </html>"""
 
 
+def render_setup(error: str | None = None) -> str:
+    err = f'<div class="flash err">{escape(error)}</div>' if error else ""
+    body = f"""
+<div class="grid" style="max-width:760px;margin-top:14px">
+  <div class="card">
+    <h2 style="margin:0 0 8px 0;font-size:18px">Server einrichten</h2>
+    <p class="small">Lege das Eltern-Login und ein separates Client-Setup-Passwort fest. Das Setup-Passwort wird später auf jedem Kinder-PC abgefragt und richtet den Agenten ein. Es öffnet nicht die Eltern-Oberfläche.</p>
+    {err}
+    <form method="post" action="/setup" style="margin-top:12px;display:grid;gap:10px">
+      <div>
+        <div class="small">Eltern-Benutzername</div>
+        <input name="admin_user" value="admin" required autocomplete="username"/>
+      </div>
+      <div>
+        <div class="small">Eltern-Passwort (mind. 8 Zeichen)</div>
+        <input name="admin_password" type="password" required autocomplete="new-password"/>
+      </div>
+      <div>
+        <div class="small">Eltern-Passwort wiederholen</div>
+        <input name="admin_password_repeat" type="password" required autocomplete="new-password"/>
+      </div>
+      <div>
+        <div class="small">Client-Setup-Passwort (mind. 8 Zeichen, anderes Passwort)</div>
+        <input name="setup_password" type="password" required autocomplete="new-password"/>
+      </div>
+      <div>
+        <div class="small">Client-Setup-Passwort wiederholen</div>
+        <input name="setup_password_repeat" type="password" required autocomplete="new-password"/>
+      </div>
+      <div>
+        <div class="small">Zeitzone</div>
+        <input name="timezone" value="Europe/Berlin"/>
+      </div>
+      <button class="btn" type="submit">Server einrichten</button>
+    </form>
+  </div>
+</div>"""
+    return _shell("KidsControl", "Erste Einrichtung", body, nav="")
+
+
+def render_setup_done() -> str:
+    body = """
+<div class="grid" style="max-width:760px;margin-top:14px">
+  <div class="card">
+    <h2 style="margin:0 0 8px 0;font-size:18px">Einrichtung gespeichert</h2>
+    <p>Starte den Server neu, damit das Sitzungsgeheimnis aus der Konfiguration geladen wird. Danach kannst du dich mit dem Eltern-Passwort anmelden.</p>
+    <p class="small">Auf den Kinder-PCs: <code>python -m kidscontrol_agent.setup</code> und das Client-Setup-Passwort eingeben. Vorher ein Kind in der Eltern-UI anlegen.</p>
+  </div>
+</div>"""
+    return _shell("KidsControl", "Neu starten", body, nav="")
+
+
 def render_login(admin_user: str, error: str | None = None) -> str:
     err = f'<div class="flash err">{escape(error)}</div>' if error else ""
     body = f"""

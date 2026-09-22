@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .env
+data/server.env
 data/*.sqlite3
 data/profiles/
 *.egg-info/

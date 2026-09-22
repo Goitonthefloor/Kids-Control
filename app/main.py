@@ -38,7 +38,8 @@ from app.policy import (
     compute_session,
     list_blocked_apps,
 )
-from app.ui import render_audit, render_child_page, render_dashboard, render_login
+from app.setup import SetupError, apply_setup
+from app.ui import render_audit, render_child_page, render_dashboard, render_login, render_setup, render_setup_done
 
 
 @asynccontextmanager
@@ -49,6 +50,21 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="KidsControl", version="1.0.0", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=config.SECRET)
+
+
+@app.middleware("http")
+async def require_setup(request: Request, call_next):
+    path = request.url.path
+    open_paths = path in {"/healthz", "/setup"}
+    if not config.is_configured():
+        if open_paths:
+            return await call_next(request)
+        if path.startswith("/api/"):
+            return JSONResponse({"error": "server_not_configured"}, status_code=503)
+        return RedirectResponse("/setup", status_code=302)
+    if path == "/setup":
+        return RedirectResponse("/login", status_code=302)
+    return await call_next(request)
 
 
 def tz() -> ZoneInfo:
@@ -114,7 +130,49 @@ def default_schedules_for(child_id: int) -> list[Schedule]:
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "service": "kidscontrol", "version": "1.0.0"}
+    return {"ok": True, "service": "kidscontrol", "version": "1.0.0", "configured": config.is_configured()}
+
+
+@app.get("/setup")
+def setup_page():
+    if config.is_configured():
+        return RedirectResponse("/login", status_code=302)
+    return HTMLResponse(render_setup())
+
+
+@app.post("/setup")
+def setup_submit(
+    admin_user: str = Form(...),
+    admin_password: str = Form(...),
+    admin_password_repeat: str = Form(...),
+    setup_password: str = Form(...),
+    setup_password_repeat: str = Form(...),
+    timezone_name: str = Form("Europe/Berlin", alias="timezone"),
+):
+    if config.is_configured():
+        return RedirectResponse("/login", status_code=302)
+    if admin_password != admin_password_repeat:
+        return HTMLResponse(render_setup("Die Eltern-Passwörter stimmen nicht überein."), status_code=400)
+    if setup_password != setup_password_repeat:
+        return HTMLResponse(render_setup("Die Setup-Passwörter stimmen nicht überein."), status_code=400)
+    try:
+        apply_setup(
+            admin_user=admin_user,
+            admin_password=admin_password,
+            setup_password=setup_password,
+            timezone_name=timezone_name,
+        )
+    except SetupError as exc:
+        return HTMLResponse(render_setup(str(exc)), status_code=400)
+    return HTMLResponse(render_setup_done())
+
+
+def _require_setup_password(given: str):
+    if not config.is_configured():
+        return JSONResponse({"error": "server_not_configured"}, status_code=503)
+    if not config.passwords_match(given or "", config.setup_password()):
+        return JSONResponse({"error": "setup_password_rejected"}, status_code=401)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -788,6 +846,78 @@ def audit_page(request: Request):
             for r in rows
         ]
         return HTMLResponse(render_audit(entries))
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Client enrollment (setup password, not the parent login)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/v1/setup/children")
+async def setup_children(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    denied = _require_setup_password(str(body.get("setup_password") or ""))
+    if denied:
+        return denied
+    db = SessionLocal()
+    try:
+        kids = [
+            {"slug": c.slug, "display_name": c.display_name}
+            for c in db.query(Child).filter_by(active=True).order_by(Child.display_name.asc()).all()
+        ]
+        return JSONResponse({"children": kids})
+    finally:
+        db.close()
+
+
+@app.post("/api/v1/setup/enroll")
+async def setup_enroll(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    denied = _require_setup_password(str(body.get("setup_password") or ""))
+    if denied:
+        return denied
+    slug = str(body.get("child_slug") or "").strip().lower()
+    device_name = str(body.get("device_name") or "").strip()
+    os_family = str(body.get("os") or body.get("os_family") or "unknown").strip().lower()
+    host_name = str(body.get("hostname") or "").strip() or None
+    if os_family == "darwin":
+        os_family = "macos"
+    if os_family not in {"linux", "windows", "macos", "unknown"}:
+        os_family = "unknown"
+    if not slug or not device_name:
+        return JSONResponse({"error": "child_slug_and_device_name_required"}, status_code=400)
+    db = SessionLocal()
+    try:
+        child = get_child_by_slug(db, slug)
+        if not child or not child.active:
+            return JSONResponse({"error": "unknown_child"}, status_code=404)
+        key = secrets.token_urlsafe(24)
+        device = Device(
+            child_id=child.id,
+            name=device_name[:80],
+            device_key=key,
+            os_family=os_family,
+            hostname=host_name,
+        )
+        db.add(device)
+        audit(db, actor="client-setup", action="DEVICE_ENROLL", child_slug=slug, details=device_name[:80])
+        db.commit()
+        return JSONResponse(
+            {
+                "device_key": key,
+                "device_name": device.name,
+                "child": {"slug": child.slug, "display_name": child.display_name},
+                "poll_interval_seconds": config.AGENT_POLL_SECONDS,
+            }
+        )
     finally:
         db.close()
 

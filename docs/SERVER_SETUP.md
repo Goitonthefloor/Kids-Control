@@ -1,43 +1,58 @@
 # KidsControl – Server Setup
 
-Version: v1.0
+Version: v1.1
 
 ## Voraussetzungen
 
-- Python 3.10+
-- Netzwerk-Erreichbarkeit für Agenten (Port 8000 oder Reverse-Proxy)
+Siehe README, Abschnitt Systemvoraussetzungen.
 
-## Installation
+- Python 3.10+
+- Port 8000 (oder ein anderer freier TCP-Port) im Heimnetz erreichbar
+
+## Einrichtung
 
 ```bash
-git clone <repo> kids-control
-cd kids-control
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
-# Passwort und Secret setzen
+python -m app.setup
 ```
+
+`python -m app.setup` fragt ab:
+
+- Eltern-Benutzername und Eltern-Passwort (Web-Login)
+- Client-Setup-Passwort (nur für `kidscontrol_agent.setup` auf den Kinder-PCs)
+
+Beide Passwörter mindestens 8 Zeichen und nicht gleich. Die Datei `data/server.env` wird mit Rechten `0600` geschrieben.
+
+Nicht-interaktiv:
+
+```bash
+python -m app.setup \
+  --admin-user admin \
+  --admin-password 'eltern-geheim' \
+  --setup-password 'client-geheim'
+```
+
+Zum Überschreiben: `--force`.
+
+Alternativ richtet der erste Browser-Aufruf denselben Schritt ein (`/setup`). Danach den Prozess neu starten.
 
 ## Start
 
 ```bash
-export $(grep -v '^#' .env | xargs)
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Oder systemd: siehe `systemd/kids-control.service`  
-`WorkingDirectory` und Pfade an die Installation anpassen. Datenverzeichnis muss schreibbar sein (`ReadWritePaths`).
+systemd lädt dieselbe Datei, siehe `systemd/kids-control.service`.
 
-## Erste Schritte in der UI
+## Danach in der UI
 
-1. Einloggen  
-2. Kind anlegen  
-3. Zeitplan prüfen/anpassen  
-4. App-Sperren setzen  
-5. Gerät anlegen und **Device-Key** notieren  
-6. Agent auf dem Kinder-PC mit diesem Key starten  
+1. Mit dem Eltern-Passwort anmelden
+2. Kind anlegen
+3. Zeitplan, App-Sperren, beobachtete Software setzen
+4. Kinder-PCs mit dem Client-Setup-Passwort einrichten (`docs/CLIENT.md`)
 
 ## Healthcheck
 
-`GET /healthz` → `{"ok": true, ...}`
+`GET /healthz` → `{"ok": true, "configured": true, ...}`
