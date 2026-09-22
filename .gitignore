@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .env
 data/server.env
+data/keys/
 data/*.sqlite3
 data/profiles/
 *.egg-info/

@@ -245,6 +245,89 @@ def test_setup_page_and_client_env(client, tmp_path):
     assert "KIDSCONTROL_SERVER=http://127.0.0.1:8000" in text
 
 
+def test_child_setup_token_language_and_app_edit(client):
+    login(client)
+    created = client.post("/ui/children/add", data={"display_name": "Lina"}, follow_redirects=False)
+    assert created.status_code == 302
+    assert "/ui/child/lina" in created.headers["location"]
+    page = client.get("/ui/child/lina")
+    assert "python -m kidscontrol_agent.setup" in page.text
+    assert "--token" in page.text
+    client.post(
+        "/ui/child/lina/apps/add",
+        data={"label": "Minecraft", "pattern": "minecraft", "match_mode": "contains", "scope": "always"},
+        follow_redirects=False,
+    )
+    db = SessionLocal()
+    try:
+        from app.db import AppRule, Child
+
+        child = db.query(Child).filter_by(slug="lina").one()
+        token = child.enroll_token
+        rule = db.query(AppRule).filter_by(child_id=child.id).one()
+        rule_id = rule.id
+    finally:
+        db.close()
+    edited = client.post(
+        f"/ui/child/lina/apps/{rule_id}",
+        data={"label": "MC", "pattern": "minecraft-launcher", "match_mode": "exact", "scope": "always", "enabled": "1"},
+        follow_redirects=False,
+    )
+    assert edited.status_code == 302
+    db = SessionLocal()
+    try:
+        from app.db import AppRule
+
+        rule = db.query(AppRule).filter_by(id=rule_id).one()
+        assert rule.pattern == "minecraft-launcher"
+        assert rule.match_mode == "exact"
+        assert rule.label == "MC"
+    finally:
+        db.close()
+
+    english = client.get("/lang/en", follow_redirects=False)
+    assert english.status_code == 302
+    dash = client.get("/dashboard")
+    assert "Add a child" in dash.text
+
+    key_body = "-----BEGIN OPENSSH PRIVATE KEY-----\nQUJD\n-----END OPENSSH PRIVATE KEY-----\n"
+    enrolled = client.post(
+        "/api/v1/setup/enroll",
+        json={
+            "token": token,
+            "device_name": "Lina PC",
+            "os": "linux",
+            "hostname": "lina-pc",
+            "ssh_user": "lina",
+            "ssh_private_key": key_body,
+        },
+    )
+    assert enrolled.status_code == 200
+    assert enrolled.json()["ssh_ready"] is True
+    db = SessionLocal()
+    try:
+        from app.db import Device
+
+        device = db.query(Device).filter_by(name="Lina PC").one()
+        assert device.ssh_enabled is True
+        assert device.ssh_user == "lina"
+        assert "PRIVATE KEY" in open(device.ssh_key_path, encoding="utf-8").read()
+    finally:
+        db.close()
+
+
+def test_openssh_plan():
+    from kidscontrol_agent.os_requirements import openssh_install_plan
+
+    apt = openssh_install_plan("linux", {"apt-get"})
+    assert apt[0][0] == "apt-get"
+    assert "openssh-server" in apt[1]
+    assert openssh_install_plan("linux", {"dnf"})[0][:2] == ["dnf", "install"]
+    assert openssh_install_plan("linux", {"pacman"})[0][0] == "pacman"
+    assert openssh_install_plan("windows", {"apt-get"}) == []
+    assert openssh_install_plan("macos", {"apt-get"}) == []
+
+
 def test_process_match_helper():
     from kidscontrol_agent.enforce import matches_rule
 

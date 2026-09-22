@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from app import config
+from app.i18n import normalize_lang, t
 
 MIN_PASSWORD = 8
 
@@ -24,13 +25,13 @@ def _quote(value: str) -> str:
 
 def validate_passwords(*, admin_password: str, setup_password: str) -> None:
     if any(ch in admin_password + setup_password for ch in "\n\r"):
-        raise SetupError("Passwörter dürfen keine Zeilenumbrüche enthalten.")
+        raise SetupError("err_password_newline")
     if len(admin_password) < MIN_PASSWORD:
-        raise SetupError(f"Das Eltern-Passwort braucht mindestens {MIN_PASSWORD} Zeichen.")
+        raise SetupError("err_admin_short")
     if len(setup_password) < MIN_PASSWORD:
-        raise SetupError(f"Das Client-Setup-Passwort braucht mindestens {MIN_PASSWORD} Zeichen.")
+        raise SetupError("err_setup_short")
     if admin_password == setup_password:
-        raise SetupError("Eltern-Passwort und Client-Setup-Passwort müssen sich unterscheiden.")
+        raise SetupError("err_passwords_same")
 
 
 def write_server_env(
@@ -84,7 +85,7 @@ def apply_setup(
 ) -> Path:
     admin_user = admin_user.strip() or "admin"
     if config.is_configured() and not force:
-        raise SetupError("Der Server ist bereits eingerichtet. Zum Überschreiben --force verwenden.")
+        raise SetupError("err_already_configured")
     validate_passwords(admin_password=admin_password, setup_password=setup_password)
     current_secret = config.secret()
     if not current_secret or current_secret == "dev-secret-change-me":
@@ -107,12 +108,12 @@ def _prompt(args: argparse.Namespace) -> argparse.Namespace:
         args.admin_password = getpass.getpass("Eltern-Passwort: ")
         again = getpass.getpass("Eltern-Passwort wiederholen: ")
         if args.admin_password != again:
-            raise SetupError("Die Eltern-Passwörter stimmen nicht überein.")
+            raise SetupError("passwords_mismatch_admin")
     if not args.setup_password:
         args.setup_password = getpass.getpass("Client-Setup-Passwort: ")
         again = getpass.getpass("Client-Setup-Passwort wiederholen: ")
         if args.setup_password != again:
-            raise SetupError("Die Setup-Passwörter stimmen nicht überein.")
+            raise SetupError("passwords_mismatch_setup")
     return args
 
 
@@ -130,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
         if sys.stdin.isatty():
             args = _prompt(args)
         elif not (args.admin_password and args.setup_password):
-            raise SetupError("Nicht-interaktiv: --admin-password und --setup-password sind nötig.")
+            raise SetupError("err_setup_short")
         path = apply_setup(
             admin_user=args.admin_user or "admin",
             admin_password=args.admin_password,
@@ -141,7 +142,8 @@ def main(argv: list[str] | None = None) -> int:
             force=args.force,
         )
     except SetupError as exc:
-        print(f"Fehler: {exc}", file=sys.stderr)
+        lang = normalize_lang(os.environ.get("LANG"))
+        print(t(lang, str(exc)), file=sys.stderr)
         return 2
     print(f"Server eingerichtet. Konfiguration: {path}")
     print("Starte danach: python -m uvicorn app.main:app --host 0.0.0.0 --port 8000")
