@@ -50,7 +50,7 @@ Nicht nötig: Active Directory, Docker, dieselbe Distribution auf allen Rechnern
 
 ## Einrichtung
 
-Version **1.2.0**.
+Version **1.3.0**.
 
 ### 1. Server mit einem Klick
 
@@ -90,12 +90,12 @@ Nach der Einrichtung nutzt der Agent nur noch den Geräte-Schlüssel in `client.
 
 ![Kind-Seite mit Befehl und One-Click-Downloads für Linux, macOS und Windows](docs/images/child-oneclick-de.png)
 
-Das Skript installiert Python 3, falls es fehlt, lädt den Agenten vom Hub und richtet ihn ein. Unter Linux als root wird zusätzlich der Dienst `kidscontrol-agent` aktiviert. OpenSSH kommt über apt, dnf oder pacman, der SSH-Schlüssel wird erzeugt und der private Teil an den Server übertragen. Danach steht das Gerät in der Eltern-UI.
+Das Skript installiert Python 3, falls es fehlt, lädt den Agenten vom Hub und richtet ihn als **Systemdienst** ein, nicht unter dem Kinderkonto. Linux und macOS fragen dafür nach dem Administrator-Passwort (`sudo`) und starten `kidscontrol-agent` als root. Windows legt eine Aufgabe an, die als `SYSTEM` startet. Das Kinderkonto darf kein Administrator sein, sonst kann es den Dienst beenden. OpenSSH kommt über apt, dnf oder pacman, der SSH-Schlüssel wird für root erzeugt und der private Teil an den Server übertragen. Danach steht das Gerät in der Eltern-UI.
 
-Wer den Agenten schon im Ordner `client` hat, kann denselben Schritt von Hand starten:
+Wer den Agenten schon im Ordner `client` hat, startet denselben Schritt als Administrator:
 
 ```bash
-python -m kidscontrol_agent.setup --server http://IP-DES-SERVERS:8000 --token CODE
+sudo python3 -m kidscontrol_agent.setup --server http://IP-DES-SERVERS:8000 --token CODE
 ```
 
 ## Dokumentation
@@ -158,7 +158,7 @@ Not required: Active Directory, Docker, or the same distribution on every machin
 
 ## Setup
 
-Version **1.2.0**.
+Version **1.3.0**.
 
 ### 1. One-click server
 
@@ -198,12 +198,12 @@ After enrollment the agent only uses the device key in `client.env`. Neither the
 
 ![Child page with the command and one-click downloads for Linux, macOS, and Windows](docs/images/child-oneclick-en.png)
 
-The script installs Python 3 when it is missing, downloads the agent from the hub, and enrolls the PC. On Linux as root it also enables the `kidscontrol-agent` service. OpenSSH is installed with apt, dnf, or pacman; the SSH key is created and the private key is sent to the server. The device then shows up in the parent UI.
+The script installs Python 3 when it is missing, downloads the agent from the hub, and installs it as a **system service**, not as the child account. Linux and macOS ask for the administrator password (`sudo`) and start `kidscontrol-agent` as root. Windows creates a task that runs as `SYSTEM`. The child account must not be an administrator, or the child can stop the service. OpenSSH is installed with apt, dnf, or pacman; the SSH key is created for root and the private key is sent to the server. The device then shows up in the parent UI.
 
-If the agent is already in the `client` folder, the same step can be started by hand:
+If the agent is already in the `client` folder, start the same step as administrator:
 
 ```bash
-python -m kidscontrol_agent.setup --server http://SERVER-IP:8000 --token CODE
+sudo python3 -m kidscontrol_agent.setup --server http://SERVER-IP:8000 --token CODE
 ```
 
 ## Documentation

@@ -362,17 +362,25 @@ def test_oneclick_installer_and_agent_archive(client):
     assert token in linux.text
     assert "kidscontrol_agent.setup" in linux.text
     assert "/setup/agent.tgz" in linux.text
-    assert "systemctl enable --now kidscontrol-agent" in linux.text
+    assert "/opt/kidscontrol-client" in linux.text
+    assert "/etc/kidscontrol/client.env" in linux.text
+    assert 'exec sudo bash "$0"' in linux.text
+    assert ".local/share/kidscontrol" not in linux.text
 
     macos = client.get("/ui/child/noah/oneclick/macos")
     assert 'filename="kidscontrol-setup.command"' in macos.headers["content-disposition"]
     assert token in macos.text
+    assert "/opt/kidscontrol-client" in macos.text
     assert "systemctl" not in macos.text
+    assert ".local/share/kidscontrol" not in macos.text
 
     windows = client.get("/ui/child/noah/oneclick/windows")
     assert 'filename="kidscontrol-setup.cmd"' in windows.headers["content-disposition"]
     assert token in windows.text
     assert "/setup/agent.zip" in windows.text
+    assert "%ProgramData%\\KidsControl" in windows.text
+    assert "LOCALAPPDATA" not in windows.text
+    assert "RunAs" in windows.text
     assert "\r\n" in windows.text
 
     missing = client.get("/ui/child/noah/oneclick/android")

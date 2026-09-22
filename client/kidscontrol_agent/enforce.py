@@ -2,10 +2,27 @@
 
 from __future__ import annotations
 
+import os
 import platform
 import re
 import subprocess
 from dataclasses import dataclass
+
+# Names a root agent must never stop. Short patterns would otherwise take down the machine.
+PROTECTED_PROCESS_NAMES = {
+    "init",
+    "systemd",
+    "sshd",
+    "launchd",
+    "kernel_task",
+    "system",
+    "csrss.exe",
+    "lsass.exe",
+    "services.exe",
+    "smss.exe",
+    "wininit.exe",
+    "winlogon.exe",
+}
 
 
 @dataclass
@@ -78,6 +95,13 @@ def _list_windows() -> list[RunningProcess]:
     return procs
 
 
+def is_protected_process(pid: int, name: str) -> bool:
+    """The system agent must not kill itself, pid 1, or core OS processes."""
+    if pid <= 1 or pid == os.getpid():
+        return True
+    return name.lower() in PROTECTED_PROCESS_NAMES
+
+
 def matches_rule(process_name: str, pattern: str, match_mode: str) -> bool:
     name = process_name.lower()
     pat = pattern.lower()
@@ -93,6 +117,8 @@ def find_matching_pids(rules: list[dict]) -> list[tuple[int, str, str]]:
     hits: list[tuple[int, str, str]] = []
     procs = list_processes()
     for proc in procs:
+        if is_protected_process(proc.pid, proc.name):
+            continue
         for rule in rules:
             if matches_rule(proc.name, rule.get("pattern", ""), rule.get("match_mode", "contains")):
                 hits.append((proc.pid, proc.name, rule.get("label") or rule.get("pattern") or ""))
@@ -136,6 +162,88 @@ def notify(title: str, message: str, *, dry_run: bool = False) -> None:
         pass
 
 
+def _lock_windows() -> None:
+    """Lock the interactive desktop. From a SYSTEM service, start the lock in that session."""
+    subprocess.run(["rundll32.exe", "user32.dll,LockWorkStation"], check=False, capture_output=True)
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except Exception:
+        return
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    wtsapi32 = ctypes.WinDLL("wtsapi32", use_last_error=True)
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32.WTSGetActiveConsoleSessionId.restype = wintypes.DWORD
+    session_id = kernel32.WTSGetActiveConsoleSessionId()
+    if session_id == 0xFFFFFFFF:
+        return
+    user_token = wintypes.HANDLE()
+    wtsapi32.WTSQueryUserToken.argtypes = [wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    wtsapi32.WTSQueryUserToken.restype = wintypes.BOOL
+    if not wtsapi32.WTSQueryUserToken(session_id, ctypes.byref(user_token)):
+        return
+    primary = wintypes.HANDLE()
+    token_all_access = 0xF01FF
+    if not advapi32.DuplicateTokenEx(user_token, token_all_access, None, 2, 1, ctypes.byref(primary)):
+        kernel32.CloseHandle(user_token)
+        return
+
+    class STARTUPINFO(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("lpReserved", wintypes.LPWSTR),
+            ("lpDesktop", wintypes.LPWSTR),
+            ("lpTitle", wintypes.LPWSTR),
+            ("dwX", wintypes.DWORD),
+            ("dwY", wintypes.DWORD),
+            ("dwXSize", wintypes.DWORD),
+            ("dwYSize", wintypes.DWORD),
+            ("dwXCountChars", wintypes.DWORD),
+            ("dwYCountChars", wintypes.DWORD),
+            ("dwFillAttribute", wintypes.DWORD),
+            ("dwFlags", wintypes.DWORD),
+            ("wShowWindow", wintypes.WORD),
+            ("cbReserved2", wintypes.WORD),
+            ("lpReserved2", ctypes.POINTER(wintypes.BYTE)),
+            ("hStdInput", wintypes.HANDLE),
+            ("hStdOutput", wintypes.HANDLE),
+            ("hStdError", wintypes.HANDLE),
+        ]
+
+    class PROCESS_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("hProcess", wintypes.HANDLE),
+            ("hThread", wintypes.HANDLE),
+            ("dwProcessId", wintypes.DWORD),
+            ("dwThreadId", wintypes.DWORD),
+        ]
+
+    info = STARTUPINFO()
+    info.cb = ctypes.sizeof(STARTUPINFO)
+    info.lpDesktop = "winsta0\\default"
+    process = PROCESS_INFORMATION()
+    command = ctypes.create_unicode_buffer("rundll32.exe user32.dll,LockWorkStation")
+    advapi32.CreateProcessAsUserW(
+        primary,
+        None,
+        command,
+        None,
+        None,
+        False,
+        0x08000000,
+        None,
+        None,
+        ctypes.byref(info),
+        ctypes.byref(process),
+    )
+    if process.hProcess:
+        kernel32.CloseHandle(process.hProcess)
+    if process.hThread:
+        kernel32.CloseHandle(process.hThread)
+    kernel32.CloseHandle(primary)
+    kernel32.CloseHandle(user_token)
+
+
 def lock_session(*, dry_run: bool = False) -> None:
     """Best-effort session lock / screen lock when access is denied."""
     if dry_run:
@@ -144,11 +252,17 @@ def lock_session(*, dry_run: bool = False) -> None:
     os_name = detect_os()
     try:
         if os_name == "linux":
-            for cmd in (
-                ["loginctl", "lock-session"],
-                ["gnome-screensaver-command", "-l"],
-                ["xdg-screensaver", "lock"],
-            ):
+            commands = []
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                commands.append(["loginctl", "lock-sessions"])
+            commands.extend(
+                (
+                    ["loginctl", "lock-session"],
+                    ["gnome-screensaver-command", "-l"],
+                    ["xdg-screensaver", "lock"],
+                )
+            )
+            for cmd in commands:
                 r = subprocess.run(cmd, check=False, capture_output=True)
                 if r.returncode == 0:
                     return
@@ -159,7 +273,7 @@ def lock_session(*, dry_run: bool = False) -> None:
                 capture_output=True,
             )
         elif os_name == "windows":
-            subprocess.run(["rundll32.exe", "user32.dll,LockWorkStation"], check=False, capture_output=True)
+            _lock_windows()
     except Exception:
         pass
 

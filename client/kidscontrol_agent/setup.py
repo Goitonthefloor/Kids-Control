@@ -13,6 +13,7 @@ from pathlib import Path
 
 from kidscontrol_agent.enforce import detect_os, hostname
 from kidscontrol_agent.os_requirements import ensure_keypair, install_authorized_key, install_openssh
+from kidscontrol_agent.service_install import install_system_service, is_privileged
 
 
 def default_env_path() -> Path:
@@ -121,6 +122,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default="", help="Pfad für client.env")
     parser.add_argument("--skip-packages", action="store_true")
     args = parser.parse_args(argv)
+    if not is_privileged():
+        print("Der Agent wird als Systemdienst eingerichtet, nicht unter dem Kinderkonto.", file=sys.stderr)
+        print("Linux und macOS: sudo python3 -m kidscontrol_agent.setup …", file=sys.stderr)
+        print("Windows: Eingabeaufforderung als Administrator öffnen.", file=sys.stderr)
+        return 1
     ready = bool(args.server and (args.token or (args.setup_password and args.child)))
     if sys.stdin.isatty() and not ready:
         args = _interactive(args)
@@ -162,7 +168,13 @@ def main(argv: list[str] | None = None) -> int:
     child = (result.get("child") or {}).get("display_name") or args.child
     print(f"Gerät für {child} eingerichtet.")
     print(f"Konfiguration: {out}")
-    print(f"Start: python -m kidscontrol_agent --env {out}")
+    try:
+        status = install_system_service(out)
+    except Exception as exc:
+        print(f"Systemdienst konnte nicht gestartet werden: {exc}", file=sys.stderr)
+        return 1
+    print(status)
+    print("Das Kinderkonto darf kein Administrator sein, sonst kann es den Dienst beenden.")
     return 0
 
 

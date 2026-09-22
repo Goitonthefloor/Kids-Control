@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.0
+
+- The child-PC agent installs as a system service: root on Linux and macOS, SYSTEM on Windows
+- Setup refuses to run as the child account
+- The service does not stop itself or pid 1 when an app block matches
+
 ## 1.2.0
 
 - One-click server setup: `setup-server.sh`, `setup-server.command`, `setup-server.cmd`
