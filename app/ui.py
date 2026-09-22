@@ -154,6 +154,7 @@ def render_setup(error: str | None = None, lang: str = "de") -> str:
       <div>
         <div class="small">{escape(t(lang, "setup_password"))}</div>
         <input name="setup_password" type="password" required autocomplete="new-password"/>
+        <p class="small" style="margin:6px 0 0 0">{escape(t(lang, "setup_password_hint"))}</p>
       </div>
       <div>
         <div class="small">{escape(t(lang, "setup_password_repeat"))}</div>

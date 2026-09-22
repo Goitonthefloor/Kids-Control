@@ -147,7 +147,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(f"Server eingerichtet. Konfiguration: {path}")
     print("Starte danach: python -m uvicorn app.main:app --host 0.0.0.0 --port 8000")
-    print("Das Client-Setup-Passwort wird auf jedem Kinder-PC beim Einrichten abgefragt.")
+    print("Danach mit dem Eltern-Passwort anmelden und ein Kind anlegen.")
+    print("Den Kinder-PC mit dem Einrichtungscode der Kind-Seite einrichten, nicht mit dem Client-Setup-Passwort.")
     return 0
 
 

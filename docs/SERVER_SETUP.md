@@ -27,9 +27,11 @@ python -m app.setup
 `python -m app.setup` fragt ab:
 
 - Eltern-Benutzername und Eltern-Passwort (Web-Login)
-- Client-Setup-Passwort (nur für `kidscontrol_agent.setup` auf den Kinder-PCs)
+- Client-Setup-Passwort (Haus-Passwort, einmal für den Server)
 
 Beide Passwörter mindestens 8 Zeichen und nicht gleich. Die Datei `data/server.env` wird mit Rechten `0600` geschrieben.
+
+Das Client-Setup-Passwort ist **nicht** der Code für den Kinder-PC. Jedes Kind bekommt auf der Kind-Seite einen eigenen Einrichtungscode. Damit (oder mit dem One-Click-Download) richtest du den PC ein. Das Client-Setup-Passwort brauchst du nur als Notweg: `python -m kidscontrol_agent.setup --server … --setup-password … --child kurz-id`.
 
 Nicht-interaktiv:
 
@@ -57,7 +59,7 @@ systemd lädt dieselbe Datei, siehe `systemd/kids-control.service`.
 1. Mit dem Eltern-Passwort anmelden
 2. Kind anlegen
 3. Zeitplan, App-Sperren, beobachtete Software setzen
-4. Kinder-PCs mit dem Client-Setup-Passwort einrichten (`docs/CLIENT.md`)
+4. Kinder-PCs mit dem Einrichtungscode der Kind-Seite einrichten (`docs/CLIENT.md`)
 
 ## Healthcheck
 

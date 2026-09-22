@@ -206,6 +206,11 @@ def test_setup_page_and_client_env(client, tmp_path):
     os.environ["KIDSCONTROL_SETUP_PASSWORD"] = ""
     try:
         assert client.get("/login", follow_redirects=False).headers["location"] == "/setup"
+        page = client.get("/setup")
+        assert page.status_code == 200
+        assert "Zwei Passwörter für den Server" in page.text
+        assert "nicht der Code für den Kinder-PC" in page.text
+        assert "Haus-Passwort, einmal für diesen Server" in page.text
         short = client.post(
             "/setup",
             data={
@@ -253,6 +258,7 @@ def test_child_setup_token_language_and_app_edit(client):
     page = client.get("/ui/child/lina")
     assert "python -m kidscontrol_agent.setup" in page.text
     assert "--token" in page.text
+    assert "nicht das Client-Setup-Passwort vom Server" in page.text
     client.post(
         "/ui/child/lina/apps/add",
         data={"label": "Minecraft", "pattern": "minecraft", "match_mode": "contains", "scope": "always"},
