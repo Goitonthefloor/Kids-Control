@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.0
+
+- The installer shows a clear notice: the child account must not be an administrator
+- Daily screen time counts 30-second polls, and overnight time windows wrap past midnight
+- Enrollment codes work once; parents can create a new code on the child page
+- Remote updates stay pending until the agent confirms, and stalled updates are queued again
+- Setup is only accepted from the server machine, session cookies are SameSite, and weak secrets are rejected
+- SSH pins the host key reported by the client and refuses unsafe package names
+- Login and enrollment attempts are throttled; notifications no longer build shell commands from app names
+
 ## 1.3.0
 
 - The child-PC agent installs as a system service: root on Linux and macOS, SYSTEM on Windows

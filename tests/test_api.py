@@ -164,6 +164,26 @@ def test_inventory_and_update_queue(client):
     commands = r.json()["commands"]
     assert commands and commands[0]["package_name"] == "firefox"
     cid = commands[0]["id"]
+    db = SessionLocal()
+    try:
+        from app.db import DeviceCommand
+
+        assert db.query(DeviceCommand).filter_by(id=cid).one().status == "pending"
+    finally:
+        db.close()
+
+    running = client.post(
+        f"/api/v1/agent/commands/{cid}/result",
+        headers={"X-Device-Key": key},
+        json={"status": "running", "output": ""},
+    )
+    assert running.status_code == 200
+    quiet = client.post(
+        "/api/v1/agent/sync",
+        headers={"X-Device-Key": key},
+        json={"active": False, "os": "linux", "inventory": []},
+    )
+    assert all(item["id"] != cid for item in quiet.json()["commands"])
 
     r = client.post(
         f"/api/v1/agent/commands/{cid}/result",
@@ -365,6 +385,10 @@ def test_oneclick_installer_and_agent_archive(client):
     assert "/opt/kidscontrol-client" in linux.text
     assert "/etc/kidscontrol/client.env" in linux.text
     assert 'exec sudo bash "$0"' in linux.text
+    assert (
+        "Das Kinderkonto darf kein Administrator sein. "
+        "Mit sudo oder Windows-Adminrechten kann es den Dienst trotzdem stoppen."
+    ) in linux.text
     assert ".local/share/kidscontrol" not in linux.text
 
     macos = client.get("/ui/child/noah/oneclick/macos")
@@ -382,6 +406,7 @@ def test_oneclick_installer_and_agent_archive(client):
     assert "LOCALAPPDATA" not in windows.text
     assert "RunAs" in windows.text
     assert "\r\n" in windows.text
+    assert "Das Kinderkonto darf kein Administrator sein." in windows.text
 
     missing = client.get("/ui/child/noah/oneclick/android")
     assert missing.status_code == 404
@@ -404,3 +429,189 @@ def test_process_match_helper():
     assert matches_rule("RobloxPlayerBeta.exe", "RobloxPlayerBeta.exe", "exact")
     assert matches_rule("steamwebhelper", "steam", "startswith")
     assert not matches_rule("chrome", "minecraft", "contains")
+
+
+NOTICE = (
+    "Das Kinderkonto darf kein Administrator sein. "
+    "Mit sudo oder Windows-Adminrechten kann es den Dienst trotzdem stoppen."
+)
+
+
+def test_usage_remainder_and_overnight_window():
+    from app.policy import apply_usage_tick, in_window, minutes_until_end
+
+    used, remainder = apply_usage_tick(0, 0, 30)
+    assert (used, remainder) == (0, 30)
+    used, remainder = apply_usage_tick(used, remainder, 30)
+    assert (used, remainder) == (1, 0)
+    assert apply_usage_tick(5, 10, 181) == (5, 10)
+    assert in_window(1320, 360, 1380) is True
+    assert in_window(1320, 360, 300) is True
+    assert in_window(1320, 360, 600) is False
+    assert in_window(900, 1110, 1000) is True
+    assert minutes_until_end(1320, 360, 1380) == (24 * 60 - 1380) + 360
+
+
+def test_quoted_env_unescapes_password():
+    from app.config import unquote_env
+
+    assert unquote_env('"abc\\"def"') == 'abc"def'
+    assert unquote_env('"a\\\\b"') == "a\\b"
+
+
+def test_install_notice_token_rotation_and_host_key(client):
+    login(client)
+    created = client.post("/ui/children/add", data={"display_name": "Emma"}, follow_redirects=False)
+    assert created.status_code == 302
+    page = client.get("/ui/child/emma")
+    assert NOTICE in page.text
+    assert "/ui/child/emma/enroll-token" in page.text
+    db = SessionLocal()
+    try:
+        token = db.query(Child).filter_by(slug="emma").one().enroll_token
+    finally:
+        db.close()
+    pubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKidsControlHostKeyPinTest comment"
+    enrolled = client.post(
+        "/api/v1/setup/enroll",
+        json={
+            "token": token,
+            "device_name": "Emma PC",
+            "os": "linux",
+            "hostname": "emma-pc",
+            "ssh_host_key": pubkey,
+        },
+    )
+    assert enrolled.status_code == 200
+    reused = client.post(
+        "/api/v1/setup/enroll",
+        json={"token": token, "device_name": "Emma PC 2", "os": "linux"},
+    )
+    assert reused.status_code == 401
+    bad_key = client.post(
+        "/api/v1/setup/enroll",
+        json={"setup_password": "setup-secret", "child_slug": "emma", "device_name": "x", "ssh_host_key": "not-a-key"},
+    )
+    assert bad_key.status_code == 400
+    db = SessionLocal()
+    try:
+        device = db.query(Device).filter_by(name="Emma PC").one()
+        assert device.ssh_host_pubkey == "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKidsControlHostKeyPinTest"
+        child = db.query(Child).filter_by(slug="emma").one()
+        assert child.enroll_token != token
+    finally:
+        db.close()
+    rotated = client.post("/ui/child/emma/enroll-token", follow_redirects=False)
+    assert rotated.status_code == 302
+    again = client.get("/ui/child/emma")
+    assert "Neuer Einrichtungscode" in again.text
+
+
+def test_package_name_and_pinned_host_key():
+    import pytest
+
+    from app.ssh_control import remote_update_script, ssh_argv
+    from app.db import Device
+
+    with pytest.raises(ValueError):
+        remote_update_script("firefox;rm -rf /")
+    script = remote_update_script("firefox")
+    assert "firefox" in script
+    assert "rm -rf" not in script
+
+    pinned = Device(
+        ssh_host="emma-pc",
+        ssh_port=22,
+        ssh_user="root",
+        ssh_host_pubkey="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKidsControlHostKeyPinTest",
+    )
+    argv = ssh_argv(pinned, "true")
+    assert "StrictHostKeyChecking=yes" in argv
+    assert any(part.startswith("UserKnownHostsFile=") for part in argv)
+
+    fresh = Device(ssh_host="emma-pc", ssh_port=22, ssh_user="root")
+    argv = ssh_argv(fresh, "true")
+    assert "StrictHostKeyChecking=accept-new" in argv
+
+
+def test_lang_redirect_stays_on_site(client):
+    login(client)
+    remote = client.get("/lang/de", headers={"referer": "https://evil.example/phish"}, follow_redirects=False)
+    assert remote.status_code == 302
+    assert remote.headers["location"] == "/dashboard"
+    local = client.get("/lang/en", headers={"referer": "/dashboard"}, follow_redirects=False)
+    assert local.headers["location"] == "/dashboard"
+
+
+def test_setup_from_lan_is_refused_until_configured():
+    saved = {k: os.environ.get(k) for k in ("KIDSCONTROL_ADMIN_PASSWORD", "KIDSCONTROL_SETUP_PASSWORD")}
+    os.environ["KIDSCONTROL_ADMIN_PASSWORD"] = ""
+    os.environ["KIDSCONTROL_SETUP_PASSWORD"] = ""
+    try:
+        remote = TestClient(app, client=("10.1.2.3", 50000))
+        denied = remote.get("/setup")
+        assert denied.status_code == 403
+        local = TestClient(app, client=("127.0.0.1", 50001))
+        assert local.get("/setup").status_code == 200
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def test_invalid_schedule_number_does_not_crash(client):
+    login(client)
+    client.post("/ui/children/add", data={"display_name": "Noah"}, follow_redirects=False)
+    data = {"action": "save", "wd0_start_h": "500"}
+    for wd in range(7):
+        data.setdefault(f"wd{wd}_start_h", "0")
+        data[f"wd{wd}_start_m"] = "0"
+        data[f"wd{wd}_end_h"] = "0"
+        data[f"wd{wd}_end_m"] = "0"
+        data[f"wd{wd}_daily"] = "0"
+    data["wd0_start_h"] = "500"
+    saved = client.post("/ui/child/noah/schedule", data=data, follow_redirects=False)
+    assert saved.status_code == 302
+    page = client.get("/ui/child/noah")
+    assert "gültige Zahlen" in page.text
+
+
+def test_stale_running_command_returns_to_pending(client):
+    from datetime import timedelta
+
+    from app.db import DeviceCommand, utcnow
+
+    login(client)
+    client.post("/ui/children/add", data={"display_name": "Paul", "slug": "paul"}, follow_redirects=False)
+    client.post("/ui/child/paul/devices/add", data={"name": "PC", "os_family": "linux"}, follow_redirects=False)
+    db = SessionLocal()
+    try:
+        child = db.query(Child).filter_by(slug="paul").one()
+        device = db.query(Device).filter_by(child_id=child.id).one()
+        cmd = DeviceCommand(
+            device_id=device.id,
+            kind="update_all",
+            status="running",
+            via="agent",
+            started_at=utcnow() - timedelta(hours=2),
+        )
+        db.add(cmd)
+        db.commit()
+        key = device.device_key
+        cid = cmd.id
+    finally:
+        db.close()
+    synced = client.post(
+        "/api/v1/agent/sync",
+        headers={"X-Device-Key": key},
+        json={"active": False, "os": "linux"},
+    )
+    assert synced.status_code == 200
+    assert any(item["id"] == cid for item in synced.json()["commands"])
+    db = SessionLocal()
+    try:
+        assert db.query(DeviceCommand).filter_by(id=cid).one().status == "pending"
+    finally:
+        db.close()

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
 from kidscontrol_agent.enforce import detect_os
+
+_PACKAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,80}$")
 
 CACHE = Path.home() / ".cache" / "kidscontrol" / "watches.json"
 
@@ -103,6 +106,9 @@ def run_update(package_name: str | None, *, dry_run: bool = False) -> tuple[str,
     if dry_run:
         target = package_name or "ALL"
         return "done", f"dry-run update {target} on {os_name}"
+
+    if package_name and not _PACKAGE_RE.fullmatch(package_name):
+        return "failed", "Paketname ist nicht erlaubt"
 
     if os_name == "linux":
         sudo = _linux_sudo()

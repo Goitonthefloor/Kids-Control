@@ -1,6 +1,6 @@
 # KidsControl – Client Agent
 
-Version: v1.3.0
+Version: v1.4.0
 
 Der Agent läuft auf dem Kinder-PC und holt Regeln vom zentralen Server.
 
@@ -18,7 +18,7 @@ Die Datei enthält Server-Adresse und Token. Sie verlangt Administratorrechte, l
 - macOS: LaunchDaemon `com.kidscontrol.agent` als **root**
 - Windows: Aufgabenplanung `KidsControlAgent` als **SYSTEM** (`%ProgramData%\KidsControl`)
 
-Das Kinderkonto darf kein Administrator sein. Sonst kann es den Dienst beenden. Konfiguration und Geräte-Schlüssel liegen außerhalb des Kinderprofils.
+Während der Installation erscheint dieser Hinweis: „Das Kinderkonto darf kein Administrator sein. Mit sudo oder Windows-Adminrechten kann es den Dienst trotzdem stoppen.“ Konfiguration und Geräte-Schlüssel liegen außerhalb des Kinderprofils. Der Einrichtungscode gilt für ein Gerät; danach erzeugt die Kind-Seite einen neuen Code.
 
 ## Einrichtung
 

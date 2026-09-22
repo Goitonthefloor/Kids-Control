@@ -66,6 +66,7 @@ class Device(Base):
     ssh_port = Column(Integer, nullable=False, default=22)
     ssh_user = Column(String, nullable=True)
     ssh_key_path = Column(String, nullable=True)
+    ssh_host_pubkey = Column(String, nullable=True)
 
     child = relationship("Child", back_populates="devices")
     software = relationship("SoftwareItem", back_populates="device", cascade="all, delete-orphan")
@@ -140,6 +141,7 @@ class DailyUsage(Base):
     child_id = Column(Integer, ForeignKey("children.id", ondelete="CASCADE"), nullable=False)
     day = Column(String, nullable=False)
     used_minutes = Column(Integer, nullable=False, default=0)
+    remainder_seconds = Column(Integer, nullable=False, default=0)
     last_seen_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     __table_args__ = (
@@ -196,6 +198,7 @@ class DeviceCommand(Base):
     via = Column(String, nullable=False, default="agent")  # agent|ssh
     output = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    started_at = Column(DateTime(timezone=True), nullable=True)
     finished_at = Column(DateTime(timezone=True), nullable=True)
 
     device = relationship("Device", back_populates="commands")
@@ -216,6 +219,9 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_device_ssh_columns()
     _ensure_child_enroll_token()
+    _ensure_usage_remainder()
+    _ensure_command_started_at()
+    _lock_down_data_files()
 
 
 def _ensure_device_ssh_columns() -> None:
@@ -230,6 +236,7 @@ def _ensure_device_ssh_columns() -> None:
             "ssh_port": "INTEGER NOT NULL DEFAULT 22",
             "ssh_user": "VARCHAR",
             "ssh_key_path": "VARCHAR",
+            "ssh_host_pubkey": "VARCHAR",
         }
         for name, ddl in alters.items():
             if name not in cols:
@@ -243,6 +250,42 @@ def _ensure_child_enroll_token() -> None:
         cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(children)").fetchall()}
         if "enroll_token" not in cols:
             conn.exec_driver_sql("ALTER TABLE children ADD COLUMN enroll_token VARCHAR")
+
+
+def _ensure_usage_remainder() -> None:
+    if not str(engine.url).startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(daily_usage)").fetchall()}
+        if "remainder_seconds" not in cols:
+            conn.exec_driver_sql("ALTER TABLE daily_usage ADD COLUMN remainder_seconds INTEGER NOT NULL DEFAULT 0")
+
+
+def _ensure_command_started_at() -> None:
+    if not str(engine.url).startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(device_commands)").fetchall()}
+        if "started_at" not in cols:
+            conn.exec_driver_sql("ALTER TABLE device_commands ADD COLUMN started_at DATETIME")
+
+
+def _lock_down_data_files() -> None:
+    import os
+
+    from app.config import data_dir
+
+    directory = data_dir()
+    try:
+        os.chmod(directory, 0o700)
+    except OSError:
+        pass
+    for path in directory.iterdir():
+        if path.is_file():
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
 
 
 def audit(db, *, actor: str, action: str, child_slug: str | None = None, details: str | None = None) -> None:

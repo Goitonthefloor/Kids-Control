@@ -12,8 +12,13 @@ import urllib.request
 from pathlib import Path
 
 from kidscontrol_agent.enforce import detect_os, hostname
-from kidscontrol_agent.os_requirements import ensure_keypair, install_authorized_key, install_openssh
-from kidscontrol_agent.service_install import install_system_service, is_privileged
+from kidscontrol_agent.os_requirements import (
+    ensure_keypair,
+    install_authorized_key,
+    install_openssh,
+    local_host_public_key,
+)
+from kidscontrol_agent.service_install import ADMIN_NOTICE, install_system_service, is_privileged
 
 
 def default_env_path() -> Path:
@@ -63,6 +68,7 @@ def enroll(
     host: str | None = None,
     ssh_private_key: str = "",
     ssh_user: str = "",
+    ssh_host_key: str = "",
 ) -> dict:
     payload = {
         "setup_password": setup_password,
@@ -73,6 +79,7 @@ def enroll(
         "hostname": host or hostname(),
         "ssh_private_key": ssh_private_key,
         "ssh_user": ssh_user or getpass.getuser(),
+        "ssh_host_key": ssh_host_key,
     }
     return _post(server, "/api/v1/setup/enroll", payload)
 
@@ -122,6 +129,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default="", help="Pfad für client.env")
     parser.add_argument("--skip-packages", action="store_true")
     args = parser.parse_args(argv)
+    print()
+    print("=" * 60)
+    print("HINWEIS")
+    print(ADMIN_NOTICE)
+    print("=" * 60)
+    print()
     if not is_privileged():
         print("Der Agent wird als Systemdienst eingerichtet, nicht unter dem Kinderkonto.", file=sys.stderr)
         print("Linux und macOS: sudo python3 -m kidscontrol_agent.setup …", file=sys.stderr)
@@ -157,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
         token=args.token,
         ssh_private_key=private_key,
         ssh_user=getpass.getuser(),
+        ssh_host_key=local_host_public_key(),
     )
     out = Path(args.out) if args.out else default_env_path()
     write_client_env(

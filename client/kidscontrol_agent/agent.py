@@ -16,6 +16,7 @@ from kidscontrol_agent.enforce import (
     kill_pid,
     lock_session,
     notify,
+    user_session_active,
 )
 from kidscontrol_agent.inventory import load_cached_watches, query_versions, run_update, save_cached_watches
 
@@ -95,6 +96,10 @@ def handle_commands(cfg: dict, policy: dict) -> None:
         if kind not in {"update_one", "update_all"} or cid is None:
             continue
         print(f"[update] command={cid} kind={kind} package={package}")
+        try:
+            report_command(cfg["server"], cfg["device_key"], int(cid), "running", "")
+        except Exception as exc:
+            print(f"Start-Meldung fehlgeschlagen: {exc}", file=sys.stderr)
         status, output = run_update(package if kind == "update_one" else None, dry_run=cfg["dry_run"])
         try:
             report_command(cfg["server"], cfg["device_key"], int(cid), status, output)
@@ -107,7 +112,7 @@ def run_once(cfg: dict) -> int:
         print("Fehler: KIDSCONTROL_DEVICE_KEY fehlt.", file=sys.stderr)
         return 2
     try:
-        policy = sync(cfg["server"], cfg["device_key"], active=True)
+        policy = sync(cfg["server"], cfg["device_key"], active=user_session_active())
     except urllib.error.HTTPError as exc:
         print(f"HTTP-Fehler {exc.code}: {exc.read().decode('utf-8', errors='ignore')}", file=sys.stderr)
         return 1

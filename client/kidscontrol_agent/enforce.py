@@ -140,6 +140,37 @@ def kill_pid(pid: int, *, dry_run: bool = False) -> bool:
         return False
 
 
+def user_session_active() -> bool:
+    """True when a person is logged in. Failures keep enforcement on."""
+    os_name = detect_os()
+    try:
+        if os_name == "linux":
+            out = subprocess.check_output(
+                ["loginctl", "list-sessions", "--no-legend"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            )
+            return bool(out.strip())
+        if os_name == "macos":
+            out = subprocess.check_output(["who"], text=True, stderr=subprocess.DEVNULL, timeout=5)
+            return bool(out.strip())
+        if os_name == "windows":
+            out = subprocess.check_output(
+                ["query", "user"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                encoding="utf-8",
+                errors="ignore",
+            )
+            lowered = out.lower()
+            return "active" in lowered or "aktiv" in lowered
+    except Exception:
+        return True
+    return True
+
+
 def notify(title: str, message: str, *, dry_run: bool = False) -> None:
     if dry_run:
         print(f"[notify] {title}: {message}")
@@ -147,17 +178,38 @@ def notify(title: str, message: str, *, dry_run: bool = False) -> None:
     os_name = detect_os()
     try:
         if os_name == "linux":
-            subprocess.run(["notify-send", title, message], check=False, capture_output=True)
+            subprocess.run(["notify-send", "--", title, message], check=False, capture_output=True)
         elif os_name == "macos":
-            script = f'display notification "{message}" with title "{title}"'
-            subprocess.run(["osascript", "-e", script], check=False, capture_output=True)
+            subprocess.run(
+                [
+                    "osascript",
+                    "-e",
+                    "on run argv",
+                    "-e",
+                    "display notification (item 1 of argv) with title (item 2 of argv)",
+                    "-e",
+                    "end run",
+                    "--",
+                    message,
+                    title,
+                ],
+                check=False,
+                capture_output=True,
+            )
         elif os_name == "windows":
-            # Best-effort balloon via PowerShell
+            env = os.environ.copy()
+            env["KC_TITLE"] = title
+            env["KC_MESSAGE"] = message
             ps = (
                 "Add-Type -AssemblyName System.Windows.Forms; "
-                f"[System.Windows.Forms.MessageBox]::Show('{message}','{title}')"
+                "[System.Windows.Forms.MessageBox]::Show($env:KC_MESSAGE, $env:KC_TITLE)"
             )
-            subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=False, capture_output=True)
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps],
+                check=False,
+                capture_output=True,
+                env=env,
+            )
     except Exception:
         pass
 

@@ -7,6 +7,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+ADMIN_NOTICE = (
+    "Das Kinderkonto darf kein Administrator sein. "
+    "Mit sudo oder Windows-Adminrechten kann es den Dienst trotzdem stoppen."
+)
+
 
 def is_privileged() -> bool:
     """True when this process is root or a Windows administrator."""

@@ -2,6 +2,12 @@
 # Installiert den KidsControl-Agenten unter Linux und zeigt den Setup-Schritt.
 set -euo pipefail
 
+echo
+echo "============================================================"
+echo "HINWEIS"
+echo "Das Kinderkonto darf kein Administrator sein. Mit sudo oder Windows-Adminrechten kann es den Dienst trotzdem stoppen."
+echo "============================================================"
+echo
 if [[ $EUID -ne 0 ]]; then
   echo "Bitte mit sudo/root ausführen."
   exit 1
