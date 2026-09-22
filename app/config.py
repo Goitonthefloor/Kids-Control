@@ -32,11 +32,26 @@ def data_dir() -> Path:
     raw = _env("KIDSCONTROL_DATA_DIR")
     path = Path(raw) if raw else DEFAULT_DATA_DIR
     path.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
     return path
 
 
 def server_env_path() -> Path:
     return data_dir() / "server.env"
+
+
+def unquote_env(value: str) -> str:
+    """Undo the quoting written by the server setup."""
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        inner = value[1:-1]
+        if value[0] == '"':
+            return inner.replace('\\"', '"').replace("\\\\", "\\")
+        return inner
+    return value
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -48,7 +63,7 @@ def parse_env_file(path: Path) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        data[key.strip()] = value.strip().strip('"').strip("'")
+        data[key.strip()] = unquote_env(value)
     return data
 
 
@@ -78,8 +93,15 @@ def setup_password() -> str:
     return _env("KIDSCONTROL_SETUP_PASSWORD")
 
 
+WEAK_SECRETS = {"dev-secret-change-me", "change-me-long-random", "change-me"}
+_EPHEMERAL_SECRET = secrets.token_urlsafe(32)
+
+
 def secret() -> str:
-    return _env("KIDSCONTROL_SECRET", "dev-secret-change-me")
+    value = _env("KIDSCONTROL_SECRET")
+    if value and value not in WEAK_SECRETS:
+        return value
+    return _EPHEMERAL_SECRET
 
 
 def timezone_name() -> str:
@@ -99,7 +121,8 @@ def agent_poll_seconds() -> int:
 
 
 def is_configured() -> bool:
-    return bool(admin_password()) and bool(setup_password())
+    stored_secret = _env("KIDSCONTROL_SECRET")
+    return bool(admin_password()) and bool(setup_password()) and bool(stored_secret) and stored_secret not in WEAK_SECRETS
 
 
 def passwords_match(given: str, expected: str) -> bool:

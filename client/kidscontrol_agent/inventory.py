@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
 from pathlib import Path
 
 from kidscontrol_agent.enforce import detect_os
+
+_PACKAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,80}$")
 
 CACHE = Path.home() / ".cache" / "kidscontrol" / "watches.json"
 
@@ -90,6 +94,12 @@ def _lookup_winget(name: str) -> tuple[str, str]:
     return "", "winget"
 
 
+def _linux_sudo() -> str:
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return ""
+    return "sudo -n "
+
+
 def run_update(package_name: str | None, *, dry_run: bool = False) -> tuple[str, str]:
     """Return (status, output). status is done|failed."""
     os_name = detect_os()
@@ -97,22 +107,26 @@ def run_update(package_name: str | None, *, dry_run: bool = False) -> tuple[str,
         target = package_name or "ALL"
         return "done", f"dry-run update {target} on {os_name}"
 
+    if package_name and not _PACKAGE_RE.fullmatch(package_name):
+        return "failed", "Paketname ist nicht erlaubt"
+
     if os_name == "linux":
+        sudo = _linux_sudo()
         if package_name:
             script = (
                 "set -eu; pkg=\"$1\"; "
-                "if command -v apt-get >/dev/null; then sudo -n apt-get update && sudo -n apt-get install -y --only-upgrade \"$pkg\"; "
-                "elif command -v dnf >/dev/null; then sudo -n dnf upgrade -y \"$pkg\"; "
-                "elif command -v pacman >/dev/null; then sudo -n pacman -Syu --noconfirm \"$pkg\"; "
+                f"if command -v apt-get >/dev/null; then {sudo}apt-get update && {sudo}apt-get install -y --only-upgrade \"$pkg\"; "
+                f"elif command -v dnf >/dev/null; then {sudo}dnf upgrade -y \"$pkg\"; "
+                f"elif command -v pacman >/dev/null; then {sudo}pacman -Syu --noconfirm \"$pkg\"; "
                 "else echo 'kein Paketmanager'; exit 3; fi"
             )
             cmd = ["bash", "-lc", script, "kc-update", package_name]
         else:
             script = (
                 "set -eu; "
-                "if command -v apt-get >/dev/null; then sudo -n apt-get update && sudo -n apt-get upgrade -y; "
-                "elif command -v dnf >/dev/null; then sudo -n dnf upgrade -y; "
-                "elif command -v pacman >/dev/null; then sudo -n pacman -Syu --noconfirm; "
+                f"if command -v apt-get >/dev/null; then {sudo}apt-get update && {sudo}apt-get upgrade -y; "
+                f"elif command -v dnf >/dev/null; then {sudo}dnf upgrade -y; "
+                f"elif command -v pacman >/dev/null; then {sudo}pacman -Syu --noconfirm; "
                 "else echo 'kein Paketmanager'; exit 3; fi"
             )
             cmd = ["bash", "-lc", script]

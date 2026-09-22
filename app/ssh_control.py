@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import os
+import re
+import shlex
 import subprocess
 from pathlib import Path
 
 from app import config
 from app.db import Device
+
+PACKAGE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,80}$")
 
 
 def ssh_target(device: Device) -> str:
@@ -18,13 +22,49 @@ def ssh_target(device: Device) -> str:
     return f"{user}@{host}"
 
 
+def known_hosts_path() -> Path:
+    path = config.data_dir() / "known_hosts"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text("", encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return path
+
+
+def _pin_host_key(device: Device) -> bool:
+    """Write the client-reported host key. Returns True when a key is pinned."""
+    pubkey = " ".join((device.ssh_host_pubkey or "").split())
+    host = (device.ssh_host or device.hostname or "").strip()
+    if not pubkey or not host or any(ch in host for ch in " \t\r\n#|[]"):
+        return False
+    port = int(device.ssh_port or 22)
+    marker = f"[{host}]:{port} "
+    line = f"{marker}{pubkey}"
+    path = known_hosts_path()
+    existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+    kept = [row for row in existing.splitlines() if row and not row.startswith(marker)]
+    kept.append(line)
+    path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return True
+
+
 def ssh_argv(device: Device, remote_command: str) -> list[str]:
+    pinned = _pin_host_key(device)
     argv = [
         "ssh",
         "-o",
         "BatchMode=yes",
         "-o",
-        "StrictHostKeyChecking=accept-new",
+        f"UserKnownHostsFile={known_hosts_path()}",
+        "-o",
+        "StrictHostKeyChecking=yes" if pinned else "StrictHostKeyChecking=accept-new",
         "-o",
         "ConnectTimeout=8",
         "-p",
@@ -104,7 +144,7 @@ def store_private_key(device_id: int, private_key: str) -> Path:
 
 def remote_update_script(package_name: str | None) -> str:
     if package_name:
-        # Pass package as $1 via a here-doc wrapper
-        safe = package_name.replace("'", "")
-        return f"bash -s -- '{safe}' <<'KC_UPDATE'\n{LINUX_UPDATE_ONE}\nKC_UPDATE"
+        if not PACKAGE_NAME_RE.fullmatch(package_name):
+            raise ValueError("unsafe package name")
+        return f"bash -s -- {shlex.quote(package_name)} <<'KC_UPDATE'\n{LINUX_UPDATE_ONE}\nKC_UPDATE"
     return f"bash -s <<'KC_UPDATE'\n{LINUX_UPDATE_ALL}\nKC_UPDATE"

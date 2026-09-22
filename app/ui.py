@@ -82,6 +82,7 @@ input,select{
 input:focus,select:focus{border-color:rgba(16,163,127,.65); box-shadow:0 0 0 4px rgba(16,163,127,.12)}
 .flash{padding:10px 12px; border-radius:12px; border:1px solid rgba(16,163,127,.45); background:rgba(16,163,127,.12); margin-top:12px}
 .flash.err{border-color:rgba(179,58,58,.55); background:rgba(179,58,58,.12)}
+.notice{padding:12px 14px; border-radius:12px; border:1px solid rgba(196,140,40,.75); background:rgba(196,140,40,.16); margin:12px 0; font-weight:650}
 .tabs{display:flex; gap:8px; flex-wrap:wrap; margin-top:12px}
 .tabs a.active{border-color:rgba(16,163,127,.75); background:rgba(16,163,127,.12)}
 .two{display:grid; grid-template-columns:1fr 1fr; gap:12px}
@@ -294,6 +295,10 @@ def render_child_page(
 <div class="card">
   <h2 style="margin:0 0 8px 0;font-size:16px">{escape(t(lang, "client_setup_title"))}</h2>
   <p class="small">{escape(t(lang, "client_setup_intro"))}</p>
+  <div class="notice">{escape(t(lang, "install_notice"))}</div>
+  <form method="post" action="/ui/child/{slug}/enroll-token" style="margin:0 0 12px 0">
+    <button class="btn ghost" type="submit">{escape(t(lang, "new_enroll_code"))}</button>
+  </form>
   <div class="small" style="margin-top:8px">{escape(t(lang, "client_setup_cmd_label"))}</div>
   <pre style="white-space:pre-wrap;background:#0d1012;border:1px solid var(--border);border-radius:12px;padding:12px"><code>{escape(setup_command)}</code></pre>
   <p class="small" style="margin-top:10px">{escape(t(lang, "oneclick_hint"))}</p>

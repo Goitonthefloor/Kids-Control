@@ -51,6 +51,21 @@ def install_openssh(*, os_name: str, dry_run: bool = False) -> list[str]:
     return ran
 
 
+def local_host_public_key() -> str:
+    """OpenSSH host key the controller can pin. Empty when none is readable."""
+    if os.name == "nt":
+        return ""
+    for name in ("ssh_host_ed25519_key.pub", "ssh_host_ecdsa_key.pub", "ssh_host_rsa_key.pub"):
+        path = Path("/etc/ssh") / name
+        try:
+            text = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if text.startswith(("ssh-", "ecdsa-", "sk-")):
+            return text
+    return ""
+
+
 def key_path() -> Path:
     return Path.home() / ".config" / "kidscontrol" / "ssh" / "id_ed25519"
 

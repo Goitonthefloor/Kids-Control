@@ -2,6 +2,12 @@
 # Installiert den KidsControl-Agenten unter Linux und zeigt den Setup-Schritt.
 set -euo pipefail
 
+echo
+echo "============================================================"
+echo "HINWEIS"
+echo "Das Kinderkonto darf kein Administrator sein. Mit sudo oder Windows-Adminrechten kann es den Dienst trotzdem stoppen."
+echo "============================================================"
+echo
 if [[ $EUID -ne 0 ]]; then
   echo "Bitte mit sudo/root ausführen."
   exit 1
@@ -15,27 +21,9 @@ mkdir -p "$INSTALL_DIR" "$CONF_DIR"
 rm -rf "$INSTALL_DIR/kidscontrol_agent"
 cp -a "$REPO_CLIENT_DIR/kidscontrol_agent" "$INSTALL_DIR/"
 
-cat > /etc/systemd/system/kidscontrol-agent.service <<EOF
-[Unit]
-Description=KidsControl Client Agent
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=$INSTALL_DIR
-Environment=PYTHONPATH=$INSTALL_DIR
-EnvironmentFile=-$CONF_DIR/client.env
-ExecStart=/usr/bin/python3 -m kidscontrol_agent --env $CONF_DIR/client.env
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
+chmod 755 "$INSTALL_DIR"
+chmod 700 "$CONF_DIR"
 echo "Agent installiert nach $INSTALL_DIR"
-echo "Einrichten (Server-Adresse und Client-Setup-Passwort werden abgefragt):"
+echo "Einrichten startet den Systemdienst als root, nicht als Kinderkonto:"
 echo "  PYTHONPATH=$INSTALL_DIR python3 -m kidscontrol_agent.setup --out $CONF_DIR/client.env"
-echo "Danach: systemctl enable --now kidscontrol-agent"
+echo "Das Kinderkonto darf kein Administrator sein."

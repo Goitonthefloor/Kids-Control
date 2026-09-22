@@ -87,8 +87,8 @@ def apply_setup(
     if config.is_configured() and not force:
         raise SetupError("err_already_configured")
     validate_passwords(admin_password=admin_password, setup_password=setup_password)
-    current_secret = config.secret()
-    if not current_secret or current_secret == "dev-secret-change-me":
+    current_secret = os.environ.get("KIDSCONTROL_SECRET", "").strip()
+    if not current_secret or current_secret in config.WEAK_SECRETS:
         current_secret = secrets.token_urlsafe(32)
     return write_server_env(
         admin_user=admin_user,

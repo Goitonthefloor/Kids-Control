@@ -52,6 +52,32 @@ def fmt_hm(minutes: int) -> str:
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 
+def in_window(start_min: int, end_min: int, now_min: int) -> bool:
+    """True when now is inside the window. A window that passes midnight wraps."""
+    if start_min == end_min:
+        return False
+    if start_min < end_min:
+        return start_min <= now_min <= end_min
+    return now_min >= start_min or now_min <= end_min
+
+
+def minutes_until_end(start_min: int, end_min: int, now_min: int) -> int:
+    if start_min < end_min:
+        return max(0, end_min - now_min)
+    if now_min >= start_min:
+        return (24 * 60 - now_min) + end_min
+    return max(0, end_min - now_min)
+
+
+def apply_usage_tick(used_minutes: int, remainder_seconds: int, delta_seconds: float, *, max_gap: int = 180) -> tuple[int, int]:
+    """Add elapsed seconds. Gaps longer than max_gap are ignored (the PC was off or asleep)."""
+    if delta_seconds < 0 or delta_seconds > max_gap:
+        delta_seconds = 0
+    remainder = int(remainder_seconds) + int(delta_seconds)
+    gained = remainder // 60
+    return int(used_minutes) + gained, remainder % 60
+
+
 def child_tz(child: Child) -> ZoneInfo:
     try:
         return ZoneInfo(child.timezone or "Europe/Berlin")
@@ -111,7 +137,7 @@ def compute_session(db: Session, child: Child, *, tick_usage: bool = False) -> d
     end_min = int(sched.end_min)
     limit = int(sched.daily_minutes or 0)
 
-    if not (start_min <= mnow <= end_min):
+    if not in_window(start_min, end_min, mnow):
         return {
             "allow": False,
             "reason": "outside-time",
@@ -133,22 +159,25 @@ def compute_session(db: Session, child: Child, *, tick_usage: bool = False) -> d
 
     usage = db.query(DailyUsage).filter_by(child_id=child.id, day=day).first()
     if not usage:
-        usage = DailyUsage(child_id=child.id, day=day, used_minutes=0, last_seen_at=now_utc)
+        usage = DailyUsage(child_id=child.id, day=day, used_minutes=0, remainder_seconds=0, last_seen_at=now_utc)
         db.add(usage)
         db.flush()
 
     if tick_usage:
         last = as_aware_utc(usage.last_seen_at) or now_utc
-        delta_min = int((now_utc - last).total_seconds() // 60)
-        if delta_min < 0 or delta_min > 2:
-            delta_min = 0
-        if delta_min > 0:
-            usage.used_minutes = int(usage.used_minutes) + delta_min
+        delta_seconds = (now_utc - last).total_seconds()
+        used, remainder = apply_usage_tick(
+            int(usage.used_minutes or 0),
+            int(getattr(usage, "remainder_seconds", 0) or 0),
+            delta_seconds,
+        )
+        usage.used_minutes = used
+        usage.remainder_seconds = remainder
         usage.last_seen_at = now_utc
         db.flush()
 
     remaining = limit - int(usage.used_minutes)
-    minutes_left_window = end_min - mnow
+    minutes_left_window = minutes_until_end(start_min, end_min, mnow)
 
     if remaining <= 0:
         return {

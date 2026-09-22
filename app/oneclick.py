@@ -8,6 +8,10 @@ import zipfile
 from pathlib import Path
 
 CLIENT_PACKAGE = Path(__file__).resolve().parent.parent / "client" / "kidscontrol_agent"
+ADMIN_NOTICE = (
+    "Das Kinderkonto darf kein Administrator sein. "
+    "Mit sudo oder Windows-Adminrechten kann es den Dienst trotzdem stoppen."
+)
 
 
 def _safe_token(token: str) -> str:
@@ -35,10 +39,25 @@ def agent_archive(kind: str) -> bytes:
     return buffer.getvalue()
 
 
+def _safe_server(server: str) -> str:
+    from urllib.parse import urlparse
+
+    parsed = urlparse(server.strip())
+    host = parsed.hostname or ""
+    if parsed.scheme not in {"http", "https"} or not host:
+        raise ValueError("unsafe server")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {"", "/"}:
+        raise ValueError("unsafe server")
+    if any(char in host for char in "\"'$`\\ \n\r;&|<>"):
+        raise ValueError("unsafe server")
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{host}{port}"
+
+
 def client_installer(platform: str, *, server: str, token: str) -> tuple[str, str, str]:
     """Return (filename, media_type, body) for a one-click client installer."""
     token = _safe_token(token)
-    server = server.rstrip("/")
+    server = _safe_server(server)
     if platform == "linux":
         return "kidscontrol-setup.sh", "text/x-shellscript", _linux_script(server, token, systemd=True)
     if platform == "macos":
@@ -49,94 +68,88 @@ def client_installer(platform: str, *, server: str, token: str) -> tuple[str, st
 
 
 def _linux_script(server: str, token: str, *, systemd: bool) -> str:
-    unit = ""
-    if systemd:
-        unit = r"""
-if [[ "$(id -u)" -eq 0 ]] && command -v systemctl >/dev/null 2>&1; then
-  cat > /etc/systemd/system/kidscontrol-agent.service <<UNIT
-[Unit]
-Description=KidsControl Client Agent
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=$INSTALL_DIR
-Environment=PYTHONPATH=$INSTALL_DIR
-EnvironmentFile=-$OUT
-ExecStart=/usr/bin/python3 -m kidscontrol_agent --env $OUT
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-  systemctl daemon-reload
-  systemctl enable --now kidscontrol-agent
-  echo "Dienst kidscontrol-agent ist aktiv."
-fi
-"""
+    # systemd is kept for callers; the service itself is installed by kidscontrol_agent.setup as root.
+    del systemd
     return f"""#!/usr/bin/env bash
-# KidsControl one-click client setup
+# KidsControl one-click client setup. Installs a root system service, not a child-user process.
 set -euo pipefail
+notice() {{
+  echo
+  echo "============================================================"
+  echo "HINWEIS"
+  echo "{ADMIN_NOTICE}"
+  echo "============================================================"
+  echo
+}}
+notice
+if [[ -t 0 ]]; then
+  read -r -p "Enter drücken, um die Installation fortzusetzen... " _
+fi
+if [[ "$(id -u)" -ne 0 ]]; then
+  echo "KidsControl wird als Systemdienst installiert und braucht Administratorrechte."
+  exec sudo bash "$0" "$@"
+fi
+notice
 SERVER="{server}"
 TOKEN="{token}"
-if [[ "$(id -u)" -eq 0 ]]; then
-  INSTALL_DIR="/opt/kidscontrol-client"
-  OUT="/etc/kidscontrol/client.env"
-  mkdir -p /etc/kidscontrol
-else
-  INSTALL_DIR="${{HOME}}/.local/share/kidscontrol"
-  OUT="${{HOME}}/.config/kidscontrol/client.env"
-fi
-mkdir -p "$INSTALL_DIR" "$(dirname "$OUT")"
+INSTALL_DIR="/opt/kidscontrol-client"
+OUT="/etc/kidscontrol/client.env"
+mkdir -p "$INSTALL_DIR" /etc/kidscontrol
+chmod 755 "$INSTALL_DIR"
+chmod 700 /etc/kidscontrol
 
-install_python() {{
-  if command -v python3 >/dev/null 2>&1; then
-    return
-  fi
+if ! command -v python3 >/dev/null 2>&1; then
   echo "Python 3 fehlt, Installation läuft …"
   if command -v apt-get >/dev/null 2>&1; then
-    run apt-get update && run apt-get install -y python3
+    apt-get update && apt-get install -y python3
   elif command -v dnf >/dev/null 2>&1; then
-    run dnf install -y python3
+    dnf install -y python3
   elif command -v pacman >/dev/null 2>&1; then
-    run pacman -Sy --noconfirm python
+    pacman -Sy --noconfirm python
   else
     echo "Bitte Python 3.10+ installieren und das Skript erneut starten." >&2
     exit 1
   fi
-}}
-run() {{
-  if [[ "$(id -u)" -eq 0 ]]; then
-    "$@"
-  else
-    sudo "$@"
-  fi
-}}
-install_python
+fi
 curl -fsSL "$SERVER/setup/agent.tgz" | tar -xz -C "$INSTALL_DIR"
 export PYTHONPATH="$INSTALL_DIR"
 python3 -m kidscontrol_agent.setup --server "$SERVER" --token "$TOKEN" --out "$OUT"
-{unit}
-echo "KidsControl Client ist eingerichtet: $OUT"
-if [[ "$(id -u)" -ne 0 ]]; then
-  echo "Start: PYTHONPATH=$INSTALL_DIR python3 -m kidscontrol_agent --env $OUT"
-fi
+echo "KidsControl läuft als Systemdienst (root), nicht unter dem Kinderkonto."
+notice
 """
 
 
 def _windows_script(server: str, token: str) -> str:
     return f"""@echo off
 setlocal
+chcp 65001 >nul
+echo.
+echo ============================================================
+echo HINWEIS
+echo {ADMIN_NOTICE}
+echo ============================================================
+echo.
+pause
+net session >nul 2>&1
+if errorlevel 1 (
+  echo KidsControl wird als SYSTEM-Dienst installiert und braucht Administratorrechte.
+  powershell -NoProfile -Command "Start-Process -FilePath cmd -ArgumentList '/c \"\"%~f0\"\"' -Verb RunAs"
+  exit /b
+)
+echo.
+echo ============================================================
+echo HINWEIS
+echo {ADMIN_NOTICE}
+echo ============================================================
+echo.
 set SERVER={server}
 set TOKEN={token}
-set INSTALL=%LOCALAPPDATA%\\KidsControl
+set INSTALL=%ProgramData%\\KidsControl
 mkdir "%INSTALL%" 2>nul
 where py >nul 2>&1 && set PY=py -3
 if not defined PY where python >nul 2>&1 && set PY=python
 if not defined PY (
-  echo Python 3.10+ fehlt. Bitte von https://www.python.org/downloads/ installieren und erneut doppelklicken.
+  echo Python 3.10+ fehlt. Bitte fuer alle Benutzer von https://www.python.org/downloads/ installieren.
   pause
   exit /b 1
 )
@@ -148,6 +161,12 @@ if errorlevel 1 (
 )
 set PYTHONPATH=%INSTALL%
 %PY% -m kidscontrol_agent.setup --server %SERVER% --token %TOKEN% --out "%INSTALL%\\client.env"
-echo KidsControl Client ist eingerichtet.
+echo KidsControl laeuft als SYSTEM, nicht unter dem Kinderkonto.
+echo.
+echo ============================================================
+echo HINWEIS
+echo {ADMIN_NOTICE}
+echo ============================================================
+echo.
 pause
 """.replace("\n", "\r\n")

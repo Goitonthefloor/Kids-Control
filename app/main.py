@@ -34,7 +34,7 @@ from app.db import (
     init_db,
     utcnow,
 )
-from app.ssh_control import remote_update_script, run_ssh, store_private_key
+from app.ssh_control import PACKAGE_NAME_RE, remote_update_script, run_ssh, store_private_key
 from app.policy import (
     REASON_LABELS_DE,
     SCHEDULE_PRESETS,
@@ -42,6 +42,7 @@ from app.policy import (
     compute_session,
     list_blocked_apps,
 )
+from app.guards import clear_failures, is_local_client, record_failure, safe_redirect_target, too_many_failures
 from app.setup import SetupError, apply_setup
 from app.ui import render_audit, render_child_page, render_dashboard, render_login, render_setup, render_setup_done
 
@@ -53,7 +54,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="KidsControl", version=__version__, lifespan=lifespan)
-app.add_middleware(SessionMiddleware, secret_key=config.SECRET)
+app.add_middleware(SessionMiddleware, secret_key=config.SECRET, same_site="lax", https_only=False)
 
 
 @app.middleware("http")
@@ -61,6 +62,8 @@ async def require_setup(request: Request, call_next):
     path = request.url.path
     open_paths = path in {"/healthz", "/setup"} or path.startswith("/lang/")
     if not config.is_configured():
+        if path == "/setup" and not is_local_client(request.client.host if request.client else ""):
+            return HTMLResponse("Die Ersteinrichtung ist nur direkt auf dem Server unter http://127.0.0.1:8000/setup möglich.", status_code=403)
         if open_paths:
             return await call_next(request)
         if path.startswith("/api/"):
@@ -112,7 +115,22 @@ def unique_slug(db, name: str) -> str:
 
 
 def public_base(request: Request) -> str:
-    return str(request.base_url).rstrip("/")
+    from app.oneclick import _safe_server
+
+    try:
+        return _safe_server(str(request.base_url).rstrip("/"))
+    except ValueError:
+        return f"http://127.0.0.1:{config.port()}"
+
+
+def form_int(value, default: int, low: int, high: int) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    if number < low or number > high:
+        return None
+    return number if default is None else number
 
 
 def setup_command(request: Request, token: str) -> str:
@@ -226,7 +244,7 @@ def _require_setup_password(given: str):
 @app.get("/lang/{code}")
 def set_lang(request: Request, code: str):
     request.session["lang"] = "en" if code == "en" else "de"
-    target = request.headers.get("referer") or "/dashboard"
+    target = safe_redirect_target(request.headers.get("referer"))
     return RedirectResponse(target, status_code=302)
 
 
@@ -242,9 +260,17 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
             render_login(config.ADMIN_USER, error=say(request, "not_configured"), lang=ui_lang(request)),
             status_code=500,
         )
-    if username == config.ADMIN_USER and password == config.ADMIN_PASSWORD:
+    client_host = request.client.host if request.client else ""
+    attempt_key = f"login:{client_host}:{username}"
+    if too_many_failures(attempt_key):
+        return HTMLResponse(render_login(config.ADMIN_USER, error=say(request, "login_throttled"), lang=ui_lang(request)), status_code=429)
+    user_ok = config.passwords_match(username, config.ADMIN_USER)
+    pass_ok = config.passwords_match(password, config.ADMIN_PASSWORD)
+    if user_ok and pass_ok:
+        clear_failures(attempt_key)
         request.session["user"] = username
         return RedirectResponse("/dashboard", status_code=302)
+    record_failure(attempt_key)
     return HTMLResponse(render_login(config.ADMIN_USER, error=say(request, "login_failed"), lang=ui_lang(request)), status_code=401)
 
 
@@ -448,6 +474,25 @@ def child_page(request: Request, slug: str):
         db.close()
 
 
+@app.post("/ui/child/{slug}/enroll-token")
+def rotate_enroll_token(request: Request, slug: str):
+    denied = require_admin(request)
+    if denied:
+        return denied
+    db = SessionLocal()
+    try:
+        child = get_child_by_slug(db, slug)
+        if not child:
+            return HTMLResponse("Kind nicht gefunden", status_code=404)
+        child.enroll_token = secrets.token_urlsafe(18)
+        audit(db, actor=config.ADMIN_USER, action="ENROLL_TOKEN_ROTATE", child_slug=slug)
+        db.commit()
+        request.session["flash"] = say(request, "token_rotated")
+        return RedirectResponse(f"/ui/child/{slug}", status_code=302)
+    finally:
+        db.close()
+
+
 @app.get("/ui/child/{slug}/oneclick/{platform}")
 def oneclick_installer(request: Request, slug: str, platform: str):
     denied = require_admin(request)
@@ -501,8 +546,11 @@ async def child_settings(request: Request, slug: str):
         return denied
     form = await request.form()
     timezone_name = str(form.get("timezone") or config.TIMEZONE).strip() or config.TIMEZONE
-    warn_minutes = int(form.get("warn_minutes") or 10)
-    active = int(form.get("active") or 1)
+    warn_minutes = form_int(form.get("warn_minutes") or 10, 10, 0, 120)
+    active = form_int(form.get("active") or 1, 1, 0, 1)
+    if warn_minutes is None or active is None:
+        request.session["flash"] = say(request, "invalid_number")
+        return RedirectResponse(f"/ui/child/{slug}", status_code=302)
     db = SessionLocal()
     try:
         child = get_child_by_slug(db, slug)
@@ -551,15 +599,18 @@ async def child_schedule(request: Request, slug: str):
             audit(db, actor=config.ADMIN_USER, action="APPLY_PRESET", child_slug=slug, details=preset_name)
         else:
             for wd in range(7):
-                sh = int(form.get(f"wd{wd}_start_h") or 0)
-                sm = int(form.get(f"wd{wd}_start_m") or 0)
-                eh = int(form.get(f"wd{wd}_end_h") or 0)
-                em = int(form.get(f"wd{wd}_end_m") or 0)
-                daily = int(form.get(f"wd{wd}_daily") or 0)
+                sh = form_int(form.get(f"wd{wd}_start_h") or 0, 0, 0, 23)
+                sm = form_int(form.get(f"wd{wd}_start_m") or 0, 0, 0, 59)
+                eh = form_int(form.get(f"wd{wd}_end_h") or 0, 0, 0, 23)
+                em = form_int(form.get(f"wd{wd}_end_m") or 0, 0, 0, 59)
+                daily = form_int(form.get(f"wd{wd}_daily") or 0, 0, 0, 1440)
+                if None in {sh, sm, eh, em, daily}:
+                    request.session["flash"] = say(request, "invalid_number")
+                    return RedirectResponse(f"/ui/child/{slug}", status_code=302)
                 week[wd] = {
-                    "start_min": max(0, min(23, sh)) * 60 + max(0, min(59, sm)),
-                    "end_min": max(0, min(23, eh)) * 60 + max(0, min(59, em)),
-                    "daily_minutes": max(0, min(1440, daily)),
+                    "start_min": sh * 60 + sm,
+                    "end_min": eh * 60 + em,
+                    "daily_minutes": daily,
                 }
             audit(db, actor=config.ADMIN_USER, action="SCHEDULE_SAVE", child_slug=slug)
 
@@ -836,6 +887,8 @@ def delete_watch(request: Request, slug: str, watch_id: int):
 
 
 def _queue_or_ssh_update(db, device: Device, *, package_name: str | None, actor: str, child_slug: str, lang: str = "de") -> str:
+    if package_name and not PACKAGE_NAME_RE.fullmatch(package_name):
+        return t(lang, "package_invalid")
     kind = "update_one" if package_name else "update_all"
     if device.ssh_enabled and device.os_family == "linux":
         cmd = DeviceCommand(
@@ -1030,6 +1083,41 @@ def _normalize_os(raw: str) -> str:
     return os_family
 
 
+def normalize_host_pubkey(raw: str) -> str | None:
+    """Return 'type key', '' when absent, or None when the line is not an SSH public key."""
+    text = " ".join((raw or "").split())
+    if not text:
+        return ""
+    parts = text.split(" ")
+    if len(parts) < 2:
+        return None
+    kind, material = parts[0], parts[1]
+    if not (kind.startswith("ssh-") or kind.startswith("ecdsa-") or kind.startswith("sk-")):
+        return None
+    alphabet = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=")
+    if not material or len(material) > 4096 or any(ch not in alphabet for ch in material):
+        return None
+    return f"{kind} {material}"
+
+
+def _release_stale_commands(db, device_id: int) -> None:
+    now = utcnow()
+    rows = (
+        db.query(DeviceCommand)
+        .filter_by(device_id=device_id, status="running", via="agent")
+        .all()
+    )
+    for cmd in rows:
+        stamp = cmd.started_at or cmd.created_at
+        if stamp is None:
+            continue
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        if now - stamp > timedelta(minutes=60):
+            cmd.status = "pending"
+            cmd.started_at = None
+
+
 @app.post("/api/v1/setup/enroll")
 async def setup_enroll(request: Request):
     try:
@@ -1040,16 +1128,26 @@ async def setup_enroll(request: Request):
     os_family = _normalize_os(str(body.get("os") or body.get("os_family") or "unknown"))
     host_name = str(body.get("hostname") or "").strip() or None
     device_name = str(body.get("device_name") or "").strip() or host_name or "PC"
+    attempt_key = f"enroll:{request.client.host if request.client else ''}"
+    if too_many_failures(attempt_key):
+        return JSONResponse({"error": "too_many_attempts"}, status_code=429)
+    host_pubkey = normalize_host_pubkey(str(body.get("ssh_host_key") or ""))
+    if host_pubkey is None:
+        return JSONResponse({"error": "invalid_host_key"}, status_code=400)
     db = SessionLocal()
     try:
         child = None
+        used_token = False
         if token:
             child = db.query(Child).filter_by(enroll_token=token, active=True).first()
             if not child:
+                record_failure(attempt_key)
                 return JSONResponse({"error": "setup_token_rejected"}, status_code=401)
+            used_token = True
         else:
             denied = _require_setup_password(str(body.get("setup_password") or ""))
             if denied:
+                record_failure(attempt_key)
                 return denied
             slug = str(body.get("child_slug") or "").strip().lower()
             if not slug:
@@ -1064,6 +1162,7 @@ async def setup_enroll(request: Request):
             device_key=key,
             os_family=os_family,
             hostname=host_name,
+            ssh_host_pubkey=host_pubkey or None,
         )
         private_key = str(body.get("ssh_private_key") or "")
         ssh_user = str(body.get("ssh_user") or "").strip() or None
@@ -1081,6 +1180,9 @@ async def setup_enroll(request: Request):
                 db.rollback()
                 return JSONResponse({"error": "invalid_private_key"}, status_code=400)
             device.ssh_key_path = str(path)
+        if used_token:
+            child.enroll_token = secrets.token_urlsafe(18)
+        clear_failures(attempt_key)
         audit(db, actor="client-setup", action="DEVICE_ENROLL", child_slug=child.slug, details=device.name)
         db.commit()
         return JSONResponse(
@@ -1141,14 +1243,14 @@ async def agent_sync(request: Request):
         # Count usage only while the agent reports an active interactive session.
         policy = build_agent_policy(db, child, tick_usage=bool(active))
         watches = [w.package_name for w in child.watches]
+        _release_stale_commands(db, device.id)
+        db.flush()
         pending = (
             db.query(DeviceCommand)
             .filter_by(device_id=device.id, status="pending", via="agent")
             .order_by(DeviceCommand.id.asc())
             .all()
         )
-        for cmd in pending:
-            cmd.status = "running"
         commands = [
             {"id": c.id, "kind": c.kind, "package_name": c.package_name}
             for c in pending
@@ -1192,6 +1294,12 @@ async def agent_command_result(request: Request, command_id: int):
         if not cmd:
             return JSONResponse({"error": "unknown_command"}, status_code=404)
         status = str(body.get("status") or "failed")
+        if status == "running":
+            if cmd.status in {"pending", "running"}:
+                cmd.status = "running"
+                cmd.started_at = cmd.started_at or utcnow()
+            db.commit()
+            return JSONResponse({"ok": True, "id": cmd.id, "status": cmd.status})
         if status not in {"done", "failed"}:
             status = "failed"
         cmd.status = status

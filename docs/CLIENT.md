@@ -1,6 +1,6 @@
 # KidsControl – Client Agent
 
-Version: v1.2.0
+Version: v1.4.0
 
 Der Agent läuft auf dem Kinder-PC und holt Regeln vom zentralen Server.
 
@@ -12,23 +12,29 @@ Auf der Kind-Seite die passende Datei herunterladen und auf dem Kinder-PC starte
 - macOS: `bash kidscontrol-setup.command`
 - Windows: `kidscontrol-setup.cmd` doppelklicken
 
-Die Datei enthält Server-Adresse und Token. Sie lädt den Agenten von `/setup/agent.tgz` bzw. `/setup/agent.zip`, installiert Python falls nötig und ruft `kidscontrol_agent.setup` auf. Unter Linux als root wird der systemd-Dienst `kidscontrol-agent` eingerichtet.
+Die Datei enthält Server-Adresse und Token. Sie verlangt Administratorrechte, lädt den Agenten von `/setup/agent.tgz` bzw. `/setup/agent.zip` und richtet einen Systemdienst ein:
+
+- Linux: systemd-Unit `kidscontrol-agent` als **root** (`/opt/kidscontrol-client`, `/etc/kidscontrol/client.env`)
+- macOS: LaunchDaemon `com.kidscontrol.agent` als **root**
+- Windows: Aufgabenplanung `KidsControlAgent` als **SYSTEM** (`%ProgramData%\KidsControl`)
+
+Während der Installation erscheint dieser Hinweis: „Das Kinderkonto darf kein Administrator sein. Mit sudo oder Windows-Adminrechten kann es den Dienst trotzdem stoppen.“ Konfiguration und Geräte-Schlüssel liegen außerhalb des Kinderprofils. Der Einrichtungscode gilt für ein Gerät; danach erzeugt die Kind-Seite einen neuen Code.
 
 ## Einrichtung
 
-Nach dem Anlegen eines Kindes zeigt die Eltern-UI einen Befehl. Auf dem Kinder-PC:
+Nach dem Anlegen eines Kindes zeigt die Eltern-UI einen Befehl. Auf dem Kinder-PC als Administrator:
 
 ```bash
 cd client
-python -m kidscontrol_agent.setup --server http://SERVER:8000 --token CODE
+sudo python3 -m kidscontrol_agent.setup --server http://SERVER:8000 --token CODE
 ```
 
-Der Code steht nur auf der Kind-Seite und gilt nur für dieses Kind. Das Client-Setup-Passwort vom Server ist dafür nicht nötig. Unter Linux installiert das Setup OpenSSH (`apt-get`, `dnf` oder `pacman`), erzeugt `~/.config/kidscontrol/ssh/id_ed25519`, trägt den öffentlichen Schlüssel in `~/.ssh/authorized_keys` ein und sendet den privaten Schlüssel an den Server. Der Server speichert ihn unter `data/keys/` und schaltet SSH für das Linux-Gerät an.
+Der Code steht nur auf der Kind-Seite und gilt nur für dieses Kind. Das Client-Setup-Passwort vom Server ist dafür nicht nötig. Unter Linux installiert das Setup OpenSSH (`apt-get`, `dnf` oder `pacman`), erzeugt den SSH-Schlüssel unter `/root/.config/kidscontrol/ssh/id_ed25519`, trägt den öffentlichen Schlüssel in `/root/.ssh/authorized_keys` ein und sendet den privaten Schlüssel an den Server. Der Server speichert ihn unter `data/keys/` und schaltet SSH für das Linux-Gerät an. Das Kinderkonto kann diesen Schlüssel nicht entfernen.
 
 Ohne Kind-Code geht derselbe Schritt als Notweg mit dem Client-Setup-Passwort:
 
 ```bash
-python -m kidscontrol_agent.setup --server http://SERVER:8000 --setup-password GEHEIM --child mia
+sudo python3 -m kidscontrol_agent.setup --server http://SERVER:8000 --setup-password GEHEIM --child mia
 ```
 
 ## Setup
@@ -37,18 +43,19 @@ After you add a child, the parent UI shows one command. On the child PC:
 
 ```bash
 cd client
-python -m kidscontrol_agent.setup --server http://SERVER:8000 --token CODE
+sudo python3 -m kidscontrol_agent.setup --server http://SERVER:8000 --token CODE
 ```
 
-On Linux this installs OpenSSH, creates an SSH key, and uploads the private key to the controller.
+On Linux this installs OpenSSH, creates an SSH key for root, and uploads the private key to the controller.
 
-Linux als Dienst:
+Linux als Systemdienst (root, nicht das Kinderkonto):
 
 ```bash
 sudo ./install-linux.sh
 sudo PYTHONPATH=/opt/kidscontrol-client python3 -m kidscontrol_agent.setup --out /etc/kidscontrol/client.env
-sudo systemctl enable --now kidscontrol-agent
 ```
+
+`kidscontrol_agent.setup` aktiviert den Dienst. Ohne root bricht es ab.
 
 ## Konfiguration
 
@@ -94,13 +101,13 @@ KIDSCONTROL_DRY_RUN=1 python -m kidscontrol_agent --once --env /pfad/zu/client.e
 | macOS | `ps` | `kill` | CGSession |
 | Windows | `tasklist` | `taskkill` | `LockWorkStation` |
 
-Für harte Durchsetzung sollte der Agent mit ausreichenden Rechten und als Autostart/Dienst laufen (systemd / launchd / Windows-Dienst – je nach Umgebung).
+Der Agent läuft als Systemprozess (root bzw. SYSTEM). Ein Kinderkonto ohne Administratorrechte kann ihn nicht beenden.
 
 ## Softwarestände und Updates
 
 Beim Sync sendet der Agent Versionen der beobachteten Pakete und holt ausstehende Update-Befehle ab (`update_one` / `update_all`). Ergebnisse gehen an `POST /api/v1/agent/commands/{id}/result`.
 
-Linux-Updates erwarten passwortloses `sudo` für apt, dnf oder pacman.
+Linux-Updates laufen als root direkt über apt, dnf oder pacman.
 
 ## SSH (nur Linux, optional)
 
