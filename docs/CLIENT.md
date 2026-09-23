@@ -1,12 +1,24 @@
 # KidsControl – Client Agent
 
-Version: v1.4.0
+Version: v1.5.0
 
 Der Agent läuft auf dem Kinder-PC und holt Regeln vom zentralen Server.
 
+## Per Adresse im Browser
+
+Auf der Kind-Seite steht eine Adresse, zum Beispiel `http://192.168.1.10:8000/install/…`. Sie enthält den Einrichtungscode dieses Kindes. Auf dem Kinder-PC die Adresse im Browser öffnen. Die Seite erkennt Windows, macOS oder Linux, lädt den passenden Installer und erklärt, wie du die Datei startest. Der Browser startet das Programm nicht von selbst.
+
+Linux und macOS im Terminal, ohne Browser:
+
+```bash
+curl -fsSL "http://192.168.1.10:8000/install/CODE" | sh
+```
+
+Das Skript fragt `uname` ab und führt danach denselben Installer aus. Der Link gilt für ein Gerät. Danach erzeugt die Kind-Seite einen neuen Code.
+
 ## One-Click
 
-Auf der Kind-Seite die passende Datei herunterladen und auf dem Kinder-PC starten:
+Wer die Datei am Eltern-Rechner speichern will, lädt sie auf der Kind-Seite herunter und startet sie auf dem Kinder-PC:
 
 - Linux: `bash kidscontrol-setup.sh`
 - macOS: `bash kidscontrol-setup.command`

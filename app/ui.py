@@ -284,6 +284,7 @@ def render_child_page(
     watches: list[dict] | None = None,
     lang: str = "de",
     setup_command: str = "",
+    install_url: str = "",
 ) -> str:
     slug = escape(child["slug"])
     nav = (
@@ -299,6 +300,10 @@ def render_child_page(
   <form method="post" action="/ui/child/{slug}/enroll-token" style="margin:0 0 12px 0">
     <button class="btn ghost" type="submit">{escape(t(lang, "new_enroll_code"))}</button>
   </form>
+  <div class="small" style="margin-top:8px">{escape(t(lang, "install_url_label"))}</div>
+  <pre style="white-space:pre-wrap;background:#0d1012;border:1px solid var(--border);border-radius:12px;padding:12px"><code>{escape(install_url)}</code></pre>
+  <p class="small" style="margin-top:10px">{escape(t(lang, "install_url_hint"))}</p>
+  <p class="small">{escape(t(lang, "install_url_terminal"))}</p>
   <div class="small" style="margin-top:8px">{escape(t(lang, "client_setup_cmd_label"))}</div>
   <pre style="white-space:pre-wrap;background:#0d1012;border:1px solid var(--border);border-radius:12px;padding:12px"><code>{escape(setup_command)}</code></pre>
   <p class="small" style="margin-top:10px">{escape(t(lang, "oneclick_hint"))}</p>

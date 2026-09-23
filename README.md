@@ -50,7 +50,7 @@ Nicht nötig: Active Directory, Docker, dieselbe Distribution auf allen Rechnern
 
 ## Einrichtung
 
-Version **1.4.0**.
+Version **1.5.0**.
 
 ### 1. Server mit einem Klick
 
@@ -76,17 +76,24 @@ Drei Geheimnisse, die nicht dasselbe sind:
 
 - **Eltern-Passwort** – nur das Login in der Web-Oberfläche.
 - **Client-Setup-Passwort** – einmal für den Server, ein Haus-Passwort. Es ist **nicht** der Code für den Kinder-PC. Du brauchst es nur als Notweg, wenn du `kidscontrol_agent.setup` ohne den Kind-Code startest (`--setup-password` und `--child`).
-- **Einrichtungscode je Kind** – entsteht automatisch, wenn du ein Kind anlegst. Damit (Befehl oder One-Click-Download) richtest du den Kinder-PC ein.
+- **Einrichtungscode je Kind** – entsteht automatisch, wenn du ein Kind anlegst. Damit (Adresse im Browser, Befehl oder One-Click-Download) richtest du den Kinder-PC ein.
 
 Nach der Einrichtung nutzt der Agent nur noch den Geräte-Schlüssel in `client.env`. Weder Eltern-Passwort noch Client-Setup-Passwort noch der Kind-Code laufen im Alltag mit.
 
-### 2. Kind und Client mit einem Klick
+### 2. Kind und Client über eine Adresse
 
 1. Anmelden und nur den Namen des Kindes eintragen.
-2. Auf der Kind-Seite **Linux**, **macOS** oder **Windows** herunterladen. Server-Adresse und Einrichtungs-Code stecken in der Datei.
-3. Auf dem Kinder-PC ausführen:
-   - Linux und macOS: `bash kidscontrol-setup.sh` (macOS-Datei: `kidscontrol-setup.command`)
-   - Windows: `kidscontrol-setup.cmd` doppelklicken
+2. Auf der Kind-Seite die Adresse kopieren, zum Beispiel `http://192.168.1.10:8000/install/…`.
+3. Auf dem Kinder-PC diese Adresse im Browser öffnen. Die Seite erkennt Windows, macOS oder Linux und lädt den passenden Installer.
+4. Die heruntergeladene Datei ausführen. Linux und macOS fragen nach dem Administrator-Passwort, Windows nach der Administratorfreigabe.
+
+Linux und macOS im Terminal, ohne Browser:
+
+```bash
+curl -fsSL "http://IP-DES-SERVERS:8000/install/CODE" | sh
+```
+
+Die Downloads **Linux**, **macOS** und **Windows** bleiben auf der Kind-Seite, falls du die Datei am Eltern-Rechner speichern willst.
 
 ![Kind-Seite mit Befehl und One-Click-Downloads für Linux, macOS und Windows](docs/images/child-oneclick-de.png)
 
@@ -158,7 +165,7 @@ Not required: Active Directory, Docker, or the same distribution on every machin
 
 ## Setup
 
-Version **1.4.0**.
+Version **1.5.0**.
 
 ### 1. One-click server
 
@@ -184,17 +191,24 @@ Three secrets that are not the same thing:
 
 - **Parent password** – only the login for the web UI.
 - **Client setup password** – set once for the server, a household password. It is **not** the code for the child PC. You need it only as a fallback if you run `kidscontrol_agent.setup` without the child code (`--setup-password` and `--child`).
-- **Enrollment code per child** – created automatically when you add a child. That is what you use (command or one-click download) to set up the child PC.
+- **Enrollment code per child** – created automatically when you add a child. That is what you use (browser address, command, or one-click download) to set up the child PC.
 
 After enrollment the agent only uses the device key in `client.env`. Neither the parent password, nor the client setup password, nor the child code is used in daily operation.
 
-### 2. One-click child and client
+### 2. Child and client from one address
 
 1. Sign in and enter only the child's name.
-2. On the child page, download **Linux**, **macOS**, or **Windows**. The file already contains the server address and the enrollment code.
-3. On the child PC:
-   - Linux and macOS: `bash kidscontrol-setup.sh` (macOS file: `kidscontrol-setup.command`)
-   - Windows: double-click `kidscontrol-setup.cmd`
+2. On the child page, copy the address, for example `http://192.168.1.10:8000/install/…`.
+3. On the child PC, open that address in a browser. The page detects Windows, macOS, or Linux and downloads the matching installer.
+4. Run the downloaded file. Linux and macOS ask for the administrator password; Windows asks for administrator approval.
+
+Linux and macOS in a terminal, without a browser:
+
+```bash
+curl -fsSL "http://SERVER-IP:8000/install/CODE" | sh
+```
+
+The **Linux**, **macOS**, and **Windows** downloads stay on the child page if you want to save the file on the parent machine.
 
 ![Child page with the command and one-click downloads for Linux, macOS, and Windows](docs/images/child-oneclick-en.png)
 

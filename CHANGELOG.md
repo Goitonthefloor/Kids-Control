@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.0
+
+- Each child page shows an address. Open it in a browser on the child PC and KidsControl downloads the installer for Windows, macOS, or Linux
+- The same address, requested without a browser, returns a script that detects the system and runs the matching installer
+
 ## 1.4.0
 
 - The installer shows a clear notice: the child account must not be an administrator

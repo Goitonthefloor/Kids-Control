@@ -16,6 +16,13 @@ from zoneinfo import ZoneInfo
 from app import config
 from app import __version__
 from app.i18n import t
+from app.install_web import (
+    curl_bootstrap,
+    platform_from_user_agent,
+    render_install_message,
+    render_install_page,
+    wants_install_page,
+)
 from app.oneclick import agent_archive, client_installer
 from app.db import (
     AppRule,
@@ -135,6 +142,60 @@ def form_int(value, default: int, low: int, high: int) -> int | None:
 
 def setup_command(request: Request, token: str) -> str:
     return f"python -m kidscontrol_agent.setup --server {public_base(request)} --token {token}"
+
+
+def child_install_url(request: Request, token: str) -> str:
+    return f"{public_base(request)}/install/{token}"
+
+
+_INSTALL_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+
+
+def install_lang(request: Request) -> str:
+    query = (request.query_params.get("lang") or "").lower()
+    if query in {"de", "en"}:
+        return query
+    return ui_lang(request)
+
+
+def _install_headers(extra: dict | None = None) -> dict[str, str]:
+    headers = {
+        "Cache-Control": "no-store",
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+    }
+    if extra:
+        headers.update(extra)
+    return headers
+
+
+def _install_attempt_key(request: Request) -> str:
+    host = request.client.host if request.client else ""
+    return f"install:{host}"
+
+
+def _load_install_token(request: Request, token: str) -> tuple[str | None, str | None, HTMLResponse | None]:
+    """Return (child name, token, error response). The token is not consumed here."""
+    lang = install_lang(request)
+    attempt_key = _install_attempt_key(request)
+    if too_many_failures(attempt_key):
+        page = render_install_message(lang, t(lang, "install_throttled"))
+        return None, None, HTMLResponse(page, status_code=429, headers=_install_headers())
+    if not _INSTALL_TOKEN_RE.fullmatch(token or ""):
+        record_failure(attempt_key)
+        page = render_install_message(lang, t(lang, "install_invalid"))
+        return None, None, HTMLResponse(page, status_code=404, headers=_install_headers())
+    db = SessionLocal()
+    try:
+        child = db.query(Child).filter_by(enroll_token=token, active=True).first()
+        if not child:
+            record_failure(attempt_key)
+            page = render_install_message(lang, t(lang, "install_invalid"))
+            return None, None, HTMLResponse(page, status_code=404, headers=_install_headers())
+        clear_failures(attempt_key)
+        return child.display_name, child.enroll_token, None
+    finally:
+        db.close()
 
 
 def logged_in(request: Request) -> str | None:
@@ -468,6 +529,7 @@ def child_page(request: Request, slug: str):
                 watches=watches,
                 lang=ui_lang(request),
                 setup_command=setup_command(request, child.enroll_token),
+                install_url=child_install_url(request, child.enroll_token),
             )
         )
     finally:
@@ -516,6 +578,66 @@ def oneclick_installer(request: Request, slug: str, platform: str):
         content=body,
         media_type=media,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/install/{token}")
+def install_landing(request: Request, token: str):
+    """Open on the child PC. Browsers get a page; other clients get the matching installer."""
+    name, enroll_token, error = _load_install_token(request, token)
+    if error:
+        return error
+    assert name is not None and enroll_token is not None
+    user_agent = request.headers.get("user-agent") or ""
+    accept = request.headers.get("accept") or ""
+    platform = platform_from_user_agent(user_agent, request.headers.get("sec-ch-ua-platform") or "")
+    if wants_install_page(accept, user_agent):
+        page = render_install_page(
+            lang=install_lang(request),
+            child_name=name,
+            token=enroll_token,
+            platform=platform,
+        )
+        return HTMLResponse(page, headers=_install_headers())
+    if platform:
+        return _install_file(request, enroll_token, platform)
+    try:
+        body = curl_bootstrap(public_base(request), enroll_token)
+    except ValueError:
+        page = render_install_message(install_lang(request), t(install_lang(request), "install_invalid"))
+        return HTMLResponse(page, status_code=400, headers=_install_headers())
+    return Response(
+        content=body,
+        media_type="text/x-shellscript",
+        headers=_install_headers({"Content-Disposition": 'inline; filename="kidscontrol-setup.sh"'}),
+    )
+
+
+@app.get("/install/{token}/{platform}")
+def install_for_platform(request: Request, token: str, platform: str):
+    """Installer file for one system. Used by the install page and by the curl bootstrap."""
+    _name, enroll_token, error = _load_install_token(request, token)
+    if error:
+        return error
+    assert enroll_token is not None
+    if platform not in {"linux", "macos", "windows"}:
+        lang = install_lang(request)
+        page = render_install_message(lang, t(lang, "install_unknown"))
+        return HTMLResponse(page, status_code=404, headers=_install_headers())
+    return _install_file(request, enroll_token, platform)
+
+
+def _install_file(request: Request, token: str, platform: str) -> Response:
+    try:
+        filename, media, body = client_installer(platform, server=public_base(request), token=token)
+    except ValueError:
+        lang = install_lang(request)
+        page = render_install_message(lang, t(lang, "install_invalid"))
+        return HTMLResponse(page, status_code=400, headers=_install_headers())
+    return Response(
+        content=body,
+        media_type=media,
+        headers=_install_headers({"Content-Disposition": f'attachment; filename="{filename}"'}),
     )
 
 

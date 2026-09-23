@@ -422,6 +422,119 @@ def test_oneclick_installer_and_agent_archive(client):
         assert "kidscontrol_agent/setup.py" in archive.namelist()
 
 
+def test_platform_from_user_agent():
+    from app.install_web import platform_from_user_agent, wants_install_page
+
+    windows = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0"
+    macos = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 Version/17.5 Safari/605.1.15"
+    linux = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0"
+    assert platform_from_user_agent(windows) == "windows"
+    assert platform_from_user_agent(macos) == "macos"
+    assert platform_from_user_agent(linux) == "linux"
+    assert platform_from_user_agent("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X)") is None
+    assert platform_from_user_agent("curl/8.5.0") is None
+    assert platform_from_user_agent("curl/8.5.0", '"Windows"') == "windows"
+    assert wants_install_page("text/html,application/xhtml+xml", windows) is True
+    assert wants_install_page("*/*", "curl/8.5.0") is False
+    assert wants_install_page("*/*", windows) is True
+
+
+def test_web_install_url_picks_system(client):
+    from app.guards import clear_failures
+
+    login(client)
+    created = client.post("/ui/children/add", data={"display_name": "Nora"}, follow_redirects=False)
+    assert created.status_code == 302
+    page = client.get("/ui/child/nora")
+    db = SessionLocal()
+    try:
+        token = db.query(Child).filter_by(slug="nora").one().enroll_token
+    finally:
+        db.close()
+    assert f"/install/{token}" in page.text
+    assert "Adresse für den Kinder-PC" in page.text
+
+    windows = client.get(
+        f"/install/{token}",
+        headers={
+            "Accept": "text/html",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
+        },
+    )
+    assert windows.status_code == 200
+    assert "no-store" in windows.headers["cache-control"]
+    assert f'href="/install/{token}/windows"' in windows.text
+    assert "kidscontrol-setup.cmd" in windows.text
+    assert 'id="kc-install"' in windows.text
+    assert "Nora" in windows.text
+    assert "Erkanntes System: Windows." in windows.text
+
+    linux_page = client.get(
+        f"/install/{token}?lang=en",
+        headers={
+            "Accept": "text/html",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0",
+        },
+    )
+    assert "Detected system: Linux." in linux_page.text
+    assert f'href="/install/{token}/linux"' in linux_page.text
+
+    phone = client.get(
+        f"/install/{token}",
+        headers={
+            "Accept": "text/html",
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15",
+        },
+    )
+    assert "nicht erkannt" in phone.text
+    assert 'id="kc-install"' not in phone.text
+    assert f'href="/install/{token}/macos"' in phone.text
+
+    boot = client.get(f"/install/{token}", headers={"User-Agent": "curl/8.5.0", "Accept": "*/*"})
+    assert boot.status_code == 200
+    assert "uname -s" in boot.text
+    assert f'TOKEN="{token}"' in boot.text
+    assert '"$SERVER/install/$TOKEN/$platform"' in boot.text
+    assert "platform=linux" in boot.text
+    assert "platform=macos" in boot.text
+    assert "kidscontrol_agent.setup" not in boot.text
+
+    hinted = client.get(
+        f"/install/{token}",
+        headers={"User-Agent": "curl/8.5.0", "Accept": "*/*", "Sec-CH-UA-Platform": '"Windows"'},
+    )
+    assert 'filename="kidscontrol-setup.cmd"' in hinted.headers["content-disposition"]
+    assert token in hinted.text
+
+    linux = client.get(f"/install/{token}/linux")
+    assert linux.status_code == 200
+    assert 'filename="kidscontrol-setup.sh"' in linux.headers["content-disposition"]
+    assert token in linux.text
+    assert "/setup/agent.tgz" in linux.text
+
+    missing = client.get("/install/this-token-does-not-exist")
+    assert missing.status_code == 404
+    assert "this-token-does-not-exist" not in missing.text
+    clear_failures("install:testclient")
+
+    gone = client.get(f"/install/{token}/android")
+    assert gone.status_code == 404
+
+
+def test_install_token_is_throttled(client):
+    from app.guards import clear_failures
+
+    try:
+        for _ in range(8):
+            blocked = client.get("/install/not-a-real-token-value", headers={"Accept": "text/html"})
+            assert blocked.status_code == 404
+        again = client.get("/install/not-a-real-token-value", headers={"Accept": "text/html"})
+        assert again.status_code == 429
+        assert "Zu viele Versuche" in again.text
+    finally:
+        clear_failures("install:testclient")
+
+
 def test_process_match_helper():
     from kidscontrol_agent.enforce import matches_rule
 
