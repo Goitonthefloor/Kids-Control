@@ -50,7 +50,7 @@ Nicht nötig: Active Directory, Docker, dieselbe Distribution auf allen Rechnern
 
 ## Einrichtung
 
-Version **1.5.0**.
+Version **1.6.0**.
 
 ### 1. Server mit einem Klick
 
@@ -84,14 +84,9 @@ Nach der Einrichtung nutzt der Agent nur noch den Geräte-Schlüssel in `client.
 
 1. Anmelden und nur den Namen des Kindes eintragen.
 2. Auf der Kind-Seite die Adresse kopieren, zum Beispiel `http://192.168.1.10:8000/install/…`.
-3. Auf dem Kinder-PC diese Adresse im Browser öffnen. Die Seite erkennt Windows, macOS oder Linux und lädt den passenden Installer.
-4. Die heruntergeladene Datei ausführen. Linux und macOS fragen nach dem Administrator-Passwort, Windows nach der Administratorfreigabe.
-
-Linux und macOS im Terminal, ohne Browser:
-
-```bash
-curl -fsSL "http://IP-DES-SERVERS:8000/install/CODE" | sh
-```
+3. Auf dem Kinder-PC diese Adresse im Browser öffnen. Die Maske fragt, welchem Kind der PC gehört, und nach einem Namen für den PC.
+4. Mit **Eintrag anlegen und Einrichtung starten** wird der Eintrag gespeichert. Die Seite lädt den Installer für das erkannte System und zeigt jede Rückmeldung.
+5. Die heruntergeladene Datei ausführen. Linux und macOS fragen nach dem Administrator-Passwort, Windows nach der Administratorfreigabe. In der Liste erscheinen die Bestätigungen: Installer gestartet, Agent geladen, Daten übertragen, Dienst gestartet, fertig.
 
 Die Downloads **Linux**, **macOS** und **Windows** bleiben auf der Kind-Seite, falls du die Datei am Eltern-Rechner speichern willst.
 
@@ -165,7 +160,7 @@ Not required: Active Directory, Docker, or the same distribution on every machin
 
 ## Setup
 
-Version **1.5.0**.
+Version **1.6.0**.
 
 ### 1. One-click server
 
@@ -199,14 +194,9 @@ After enrollment the agent only uses the device key in `client.env`. Neither the
 
 1. Sign in and enter only the child's name.
 2. On the child page, copy the address, for example `http://192.168.1.10:8000/install/…`.
-3. On the child PC, open that address in a browser. The page detects Windows, macOS, or Linux and downloads the matching installer.
-4. Run the downloaded file. Linux and macOS ask for the administrator password; Windows asks for administrator approval.
-
-Linux and macOS in a terminal, without a browser:
-
-```bash
-curl -fsSL "http://SERVER-IP:8000/install/CODE" | sh
-```
+3. On the child PC, open that address in a browser. The form asks which child the PC belongs to and what the PC should be called.
+4. **Create the entry and start setup** stores the device. The page downloads the installer for the detected system and shows each confirmation.
+5. Run the downloaded file. Linux and macOS ask for the administrator password; Windows asks for administrator approval. The list then shows: installer started, agent downloaded, data sent, service started, done.
 
 The **Linux**, **macOS**, and **Windows** downloads stay on the child page if you want to save the file on the parent machine.
 

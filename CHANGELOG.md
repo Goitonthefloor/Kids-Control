@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.0
+
+- The install address opens a form that asks which child the PC belongs to and creates that device
+- The installer then exchanges hostname, system, and keys with the server
+- The browser lists each confirmation as the PC reports it
+
 ## 1.5.0
 
 - Each child page shows an address. Open it in a browser on the child PC and KidsControl downloads the installer for Windows, macOS, or Linux

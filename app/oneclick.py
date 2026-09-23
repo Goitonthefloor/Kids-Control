@@ -54,10 +54,19 @@ def _safe_server(server: str) -> str:
     return f"{parsed.scheme}://{host}{port}"
 
 
-def client_installer(platform: str, *, server: str, token: str) -> tuple[str, str, str]:
+def client_installer(platform: str, *, server: str, token: str = "", ticket: str = "") -> tuple[str, str, str]:
     """Return (filename, media_type, body) for a one-click client installer."""
-    token = _safe_token(token)
     server = _safe_server(server)
+    if ticket:
+        ticket = _safe_token(ticket)
+        if platform == "linux":
+            return "kidscontrol-setup.sh", "text/x-shellscript", _linux_ticket_script(server, ticket, systemd=True)
+        if platform == "macos":
+            return "kidscontrol-setup.command", "text/x-shellscript", _linux_ticket_script(server, ticket, systemd=False)
+        if platform == "windows":
+            return "kidscontrol-setup.cmd", "application/octet-stream", _windows_ticket_script(server, ticket)
+        raise ValueError("unknown platform")
+    token = _safe_token(token)
     if platform == "linux":
         return "kidscontrol-setup.sh", "text/x-shellscript", _linux_script(server, token, systemd=True)
     if platform == "macos":
@@ -169,4 +178,145 @@ echo {ADMIN_NOTICE}
 echo ============================================================
 echo.
 pause
+""".replace("\n", "\r\n")
+
+
+def _linux_ticket_script(server: str, ticket: str, *, systemd: bool) -> str:
+    del systemd
+    return f"""#!/usr/bin/env bash
+# KidsControl setup. The child was chosen in the browser. This file finishes the PC.
+set -euo pipefail
+SERVER="{server}"
+TICKET="{ticket}"
+say() {{
+  local code="$1"
+  local text="Meldung: $code"
+  case "$code" in
+    installer_opened) text="Der Installer auf diesem PC wurde gestartet." ;;
+    python_install) text="Python 3 fehlt und wird installiert." ;;
+    python_ok) text="Python 3 ist bereit." ;;
+    agent_downloaded) text="Der Agent wurde vom Server geladen." ;;
+    failed) text="Die Einrichtung ist fehlgeschlagen." ;;
+  esac
+  echo
+  echo "------------------------------------------------------------"
+  echo "$text"
+  echo "------------------------------------------------------------"
+  curl -fsS -X POST "$SERVER/api/v1/setup/progress" \\
+    -H "Content-Type: application/json" \\
+    --data "{{\\"ticket\\":\\"$TICKET\\",\\"code\\":\\"$code\\"}}" >/dev/null \\
+    || echo "Hinweis: die Meldung konnte nicht an den Server geschickt werden."
+}}
+notice() {{
+  echo
+  echo "============================================================"
+  echo "HINWEIS"
+  echo "{ADMIN_NOTICE}"
+  echo "============================================================"
+  echo
+}}
+notice
+if [[ "$(id -u)" -ne 0 ]]; then
+  echo "KidsControl wird als Systemdienst installiert und braucht Administratorrechte."
+  exec sudo bash "$0" "$@"
+fi
+say installer_opened
+SERVER="{server}"
+TICKET="{ticket}"
+INSTALL_DIR="/opt/kidscontrol-client"
+OUT="/etc/kidscontrol/client.env"
+mkdir -p "$INSTALL_DIR" /etc/kidscontrol
+chmod 755 "$INSTALL_DIR"
+chmod 700 /etc/kidscontrol
+if ! command -v python3 >/dev/null 2>&1; then
+  say python_install
+  echo "Python 3 fehlt, Installation läuft …"
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update && apt-get install -y python3
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y python3
+  elif command -v pacman >/dev/null 2>&1; then
+    pacman -Sy --noconfirm python
+  else
+    say failed
+    echo "Bitte Python 3.10+ installieren und das Skript erneut starten." >&2
+    exit 1
+  fi
+fi
+say python_ok
+curl -fsSL "$SERVER/setup/agent.tgz" | tar -xz -C "$INSTALL_DIR"
+say agent_downloaded
+export PYTHONPATH="$INSTALL_DIR"
+python3 -m kidscontrol_agent.setup --server "$SERVER" --ticket "$TICKET" --out "$OUT"
+echo "KidsControl läuft als Systemdienst (root), nicht unter dem Kinderkonto."
+notice
+"""
+
+
+def _windows_ticket_script(server: str, ticket: str) -> str:
+    return f"""@echo off
+setlocal
+chcp 65001 >nul
+echo.
+echo ============================================================
+echo HINWEIS
+echo {ADMIN_NOTICE}
+echo ============================================================
+echo.
+net session >nul 2>&1
+if errorlevel 1 (
+  echo KidsControl wird als SYSTEM-Dienst installiert und braucht Administratorrechte.
+  powershell -NoProfile -Command "Start-Process -FilePath cmd -ArgumentList '/c \"\"%~f0\"\"' -Verb RunAs"
+  exit /b
+)
+set SERVER={server}
+set TICKET={ticket}
+call :report installer_opened
+set INSTALL=%ProgramData%\\KidsControl
+mkdir "%INSTALL%" 2>nul
+where py >nul 2>&1 && set PY=py -3
+if not defined PY where python >nul 2>&1 && set PY=python
+if not defined PY (
+  call :report python_install
+  echo Python 3.10+ fehlt. Bitte fuer alle Benutzer von https://www.python.org/downloads/ installieren.
+  call :report failed
+  pause
+  exit /b 1
+)
+call :report python_ok
+powershell -NoProfile -Command "Invoke-WebRequest -Uri '%SERVER%/setup/agent.zip' -OutFile '%INSTALL%\\agent.zip'; Expand-Archive -Force '%INSTALL%\\agent.zip' '%INSTALL%'"
+if errorlevel 1 (
+  echo Download fehlgeschlagen.
+  call :report failed
+  pause
+  exit /b 1
+)
+call :report agent_downloaded
+set PYTHONPATH=%INSTALL%
+%PY% -m kidscontrol_agent.setup --server %SERVER% --ticket %TICKET% --out "%INSTALL%\\client.env"
+if errorlevel 1 (
+  call :report failed
+  pause
+  exit /b 1
+)
+echo KidsControl laeuft als SYSTEM, nicht unter dem Kinderkonto.
+echo.
+echo ============================================================
+echo HINWEIS
+echo {ADMIN_NOTICE}
+echo ============================================================
+echo.
+pause
+exit /b 0
+
+:report
+if "%~1"=="installer_opened" echo Der Installer auf diesem PC wurde gestartet.
+if "%~1"=="python_install" echo Python 3 fehlt und wird installiert.
+if "%~1"=="python_ok" echo Python 3 ist bereit.
+if "%~1"=="agent_downloaded" echo Der Agent wurde vom Server geladen.
+if "%~1"=="failed" echo Die Einrichtung ist fehlgeschlagen.
+echo ------------------------------------------------------------
+> "%TEMP%\\kidscontrol-progress.json" echo {{"ticket":"%TICKET%","code":"%~1"}}
+powershell -NoProfile -Command "try {{ Invoke-RestMethod -Method Post -Uri '%SERVER%/api/v1/setup/progress' -ContentType 'application/json' -InFile ($env:TEMP + '\\kidscontrol-progress.json') | Out-Null }} catch {{ Write-Host 'Hinweis: die Meldung konnte nicht an den Server geschickt werden.' }}"
+exit /b 0
 """.replace("\n", "\r\n")

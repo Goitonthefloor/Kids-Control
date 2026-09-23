@@ -31,7 +31,7 @@ python -m app.setup
 
 Beide Passwörter mindestens 8 Zeichen und nicht gleich. Die Datei `data/server.env` wird mit Rechten `0600` geschrieben.
 
-Das Client-Setup-Passwort ist **nicht** der Code für den Kinder-PC. Jedes Kind bekommt auf der Kind-Seite einen eigenen Einrichtungscode und eine Adresse (`/install/…`). Die Adresse auf dem Kinder-PC im Browser öffnen; die Seite lädt den Installer für das erkannte System. Der One-Click-Download bleibt der Notweg, wenn du die Datei am Eltern-Rechner speichern willst. Das Client-Setup-Passwort brauchst du nur, wenn der Kind-Code fehlt: `python -m kidscontrol_agent.setup --server … --setup-password … --child kurz-id`.
+Das Client-Setup-Passwort ist **nicht** der Code für den Kinder-PC. Die Übersicht zeigt eine Adresse (`/install/…`). Die auf dem Kinder-PC im Browser öffnen, das Kind wählen und den Installer starten. Die Seite legt den Geräteeintrag an und zeigt die Rückmeldungen. Der One-Click-Download bleibt der Notweg, wenn du die Datei am Eltern-Rechner speichern willst. Das Client-Setup-Passwort brauchst du nur, wenn der Kind-Code fehlt: `python -m kidscontrol_agent.setup --server … --setup-password … --child kurz-id`.
 
 Nicht-interaktiv:
 
