@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Each child card can block a program or give it a daily minute quota; the agent stops the program when the quota is used up
+
 ## 1.6.0
 
 - The install address opens a form that asks which child the PC belongs to and creates that device

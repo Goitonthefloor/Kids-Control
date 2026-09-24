@@ -16,7 +16,8 @@ Initialisierung ausschließlich über SQLAlchemy (`init_db()`).
 | `children` | Kind-Profile (slug, Name, Zeitzone, Vorwarnung) |
 | `devices` | Registrierte PCs + Device-Key + OS |
 | `schedules` | Pro Kind und Wochentag: Start/Ende/Tagesminuten |
-| `app_rules` | App-/Prozess-Sperren (Muster, Match-Modus, Scope) |
+| `app_rules` | Programme: Sperre oder Tageskontingent (`daily_minutes` bei Scope `quota`) |
+| `app_usage` | Verbrauchte Minuten eines Programm-Kontingents je lokalem Tag |
 | `overrides` | Zeitlich befristete Freigaben (+1h) |
 | `day_overrides` | „Heute unbegrenzt“ |
 | `daily_usage` | Verbrauchte Minuten je lokalem Tag |
@@ -26,7 +27,8 @@ Initialisierung ausschließlich über SQLAlchemy (`init_db()`).
 
 - `pattern`: z.B. `minecraft`, `steam`, `RobloxPlayerBeta.exe`
 - `match_mode`: `contains` \| `exact` \| `startswith`
-- `scope`: `always` \| `when_denied`
+- `scope`: `always` \| `when_denied` \| `quota`
+- `daily_minutes`: nur bei `quota`, Minuten pro lokalem Tag
 
 Matching ist absichtlich OS-agnostisch (Prozess-/Dateiname).
 

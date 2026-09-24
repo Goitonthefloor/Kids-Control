@@ -13,6 +13,7 @@ from kidscontrol_agent.enforce import detect_os
 _PACKAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,80}$")
 
 CACHE = Path.home() / ".cache" / "kidscontrol" / "watches.json"
+QUOTA_CACHE = Path.home() / ".cache" / "kidscontrol" / "quota_apps.json"
 
 
 def load_cached_watches() -> list[str]:
@@ -30,6 +31,42 @@ def load_cached_watches() -> list[str]:
 def save_cached_watches(names: list[str]) -> None:
     CACHE.parent.mkdir(parents=True, exist_ok=True)
     CACHE.write_text(json.dumps(sorted(set(names))), encoding="utf-8")
+
+
+def load_cached_quota() -> list[dict]:
+    if not QUOTA_CACHE.is_file():
+        return []
+    try:
+        data = json.loads(QUOTA_CACHE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[dict] = []
+    for item in data:
+        if isinstance(item, dict) and item.get("pattern"):
+            out.append(item)
+    return out
+
+
+def save_cached_quota(rules: list) -> None:
+    clean: list[dict] = []
+    for rule in rules or []:
+        if not isinstance(rule, dict):
+            continue
+        try:
+            rule_id = int(rule.get("id"))
+        except (TypeError, ValueError):
+            continue
+        pattern = str(rule.get("pattern") or "").strip()
+        if not pattern:
+            continue
+        mode = str(rule.get("match_mode") or "contains")
+        if mode not in {"contains", "exact", "startswith"}:
+            mode = "contains"
+        clean.append({"id": rule_id, "pattern": pattern, "match_mode": mode})
+    QUOTA_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    QUOTA_CACHE.write_text(json.dumps(clean), encoding="utf-8")
 
 
 def query_versions(names: list[str]) -> list[dict]:

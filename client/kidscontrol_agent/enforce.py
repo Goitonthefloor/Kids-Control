@@ -112,6 +112,26 @@ def matches_rule(process_name: str, pattern: str, match_mode: str) -> bool:
     return pat in name
 
 
+def running_rule_ids(rules: list[dict]) -> list[int]:
+    """Ids of quota rules whose process is running right now."""
+    if not rules:
+        return []
+    hits: list[int] = []
+    procs = list_processes()
+    for rule in rules:
+        try:
+            rule_id = int(rule.get("id"))
+        except (TypeError, ValueError):
+            continue
+        for proc in procs:
+            if is_protected_process(proc.pid, proc.name):
+                continue
+            if matches_rule(proc.name, rule.get("pattern", ""), rule.get("match_mode", "contains")):
+                hits.append(rule_id)
+                break
+    return hits
+
+
 def find_matching_pids(rules: list[dict]) -> list[tuple[int, str, str]]:
     """Return (pid, process_name, rule_label) for processes matching any rule."""
     hits: list[tuple[int, str, str]] = []

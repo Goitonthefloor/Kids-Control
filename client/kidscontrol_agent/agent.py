@@ -16,9 +16,17 @@ from kidscontrol_agent.enforce import (
     kill_pid,
     lock_session,
     notify,
+    running_rule_ids,
     user_session_active,
 )
-from kidscontrol_agent.inventory import load_cached_watches, query_versions, run_update, save_cached_watches
+from kidscontrol_agent.inventory import (
+    load_cached_quota,
+    load_cached_watches,
+    query_versions,
+    run_update,
+    save_cached_quota,
+    save_cached_watches,
+)
 
 
 def sync(server: str, device_key: str, *, active: bool = True) -> dict:
@@ -30,6 +38,7 @@ def sync(server: str, device_key: str, *, active: bool = True) -> dict:
             "hostname": hostname(),
             "os": detect_os(),
             "inventory": query_versions(watches) if watches else [],
+            "running_apps": running_rule_ids(load_cached_quota()),
         }
     ).encode("utf-8")
     req = urllib.request.Request(
@@ -127,6 +136,7 @@ def run_once(cfg: dict) -> int:
         f"remaining={policy.get('remaining_minutes')} "
         f"blocked_apps={len(policy.get('blocked_apps') or [])}"
     )
+    save_cached_quota(policy.get("quota_apps") or [])
     enforce_policy(policy, dry_run=cfg["dry_run"])
     handle_commands(cfg, policy)
     return 0

@@ -53,6 +53,8 @@ from app.policy import (
     build_agent_policy,
     compute_session,
     list_blocked_apps,
+    program_rows,
+    tick_running_apps,
 )
 from app.guards import clear_failures, is_local_client, record_failure, safe_redirect_target, too_many_failures
 from app.setup import SetupError, apply_setup
@@ -440,6 +442,7 @@ def dashboard(request: Request):
                     "blocked_app_count": len(
                         list_blocked_apps(db, child, session_allowed=bool(state.get("allow")))
                     ),
+                    "programs": program_rows(db, child),
                 }
             )
         flash = request.session.pop("flash", None)
@@ -512,17 +515,7 @@ def child_page(request: Request, slug: str):
             }
             for s in child.schedules
         }
-        apps = [
-            {
-                "id": a.id,
-                "label": a.label,
-                "pattern": a.pattern,
-                "match_mode": a.match_mode,
-                "scope": a.scope,
-                "enabled": a.enabled,
-            }
-            for a in child.app_rules
-        ]
+        apps = program_rows(db, child)
         devices = []
         for d in child.devices:
             items = (
@@ -937,6 +930,16 @@ async def child_schedule(request: Request, slug: str):
         db.close()
 
 
+def _quota_minutes(scope: str, raw) -> int | None:
+    """Minutes for a quota rule, None when the scope is not a quota, or -1 if invalid."""
+    if scope != "quota":
+        return None
+    minutes = form_int(raw, 30, 1, 1440)
+    if minutes is None:
+        return -1
+    return minutes
+
+
 @app.post("/ui/child/{slug}/apps/add")
 def add_app_rule(
     request: Request,
@@ -945,6 +948,7 @@ def add_app_rule(
     pattern: str = Form(...),
     match_mode: str = Form("contains"),
     scope: str = Form("always"),
+    daily_minutes: str = Form(""),
 ):
     denied = require_admin(request)
     if denied:
@@ -960,8 +964,12 @@ def add_app_rule(
             return RedirectResponse(f"/ui/child/{slug}", status_code=302)
         if match_mode not in {"contains", "exact", "startswith"}:
             match_mode = "contains"
-        if scope not in {"always", "when_denied"}:
+        if scope not in {"always", "when_denied", "quota"}:
             scope = "always"
+        minutes = _quota_minutes(scope, daily_minutes)
+        if minutes == -1:
+            request.session["flash"] = say(request, "quota_invalid")
+            return RedirectResponse(f"/ui/child/{slug}", status_code=302)
         db.add(
             AppRule(
                 child_id=child.id,
@@ -969,6 +977,7 @@ def add_app_rule(
                 pattern=pattern,
                 match_mode=match_mode,
                 scope=scope,
+                daily_minutes=minutes,
                 enabled=True,
             )
         )
@@ -1002,12 +1011,17 @@ async def edit_app_rule(request: Request, slug: str, rule_id: int):
         scope = str(form.get("scope") or "always")
         if match_mode not in {"contains", "exact", "startswith"}:
             match_mode = "contains"
-        if scope not in {"always", "when_denied"}:
+        if scope not in {"always", "when_denied", "quota"}:
             scope = "always"
+        minutes = _quota_minutes(scope, form.get("daily_minutes"))
+        if minutes == -1:
+            request.session["flash"] = say(request, "quota_invalid")
+            return RedirectResponse(f"/ui/child/{slug}", status_code=302)
         rule.label = (str(form.get("label") or pattern)).strip()
         rule.pattern = pattern
         rule.match_mode = match_mode
         rule.scope = scope
+        rule.daily_minutes = minutes
         rule.enabled = str(form.get("enabled") or "1") == "1"
         audit(db, actor=config.ADMIN_USER, action="APP_RULE_EDIT", child_slug=slug, details=pattern)
         db.commit()
@@ -1653,6 +1667,7 @@ async def agent_sync(request: Request):
         inventory = body.get("inventory") or []
         if isinstance(inventory, list):
             _store_inventory(db, device, inventory)
+        tick_running_apps(db, child, body.get("running_apps") or [])
 
         # Count usage only while the agent reports an active interactive session.
         policy = build_agent_policy(db, child, tick_usage=bool(active))

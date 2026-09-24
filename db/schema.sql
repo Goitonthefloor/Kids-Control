@@ -45,7 +45,19 @@ CREATE TABLE app_rules (
   match_mode VARCHAR NOT NULL,
   enabled BOOLEAN NOT NULL,
   scope VARCHAR NOT NULL,
+  daily_minutes INTEGER,
   created_at DATETIME NOT NULL
+);
+
+CREATE TABLE app_usage (
+  id INTEGER PRIMARY KEY,
+  child_id INTEGER NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+  rule_id INTEGER NOT NULL REFERENCES app_rules(id) ON DELETE CASCADE,
+  day VARCHAR NOT NULL,
+  used_minutes INTEGER NOT NULL,
+  remainder_seconds INTEGER NOT NULL,
+  last_seen_at DATETIME NOT NULL,
+  CONSTRAINT uq_app_usage_rule_day UNIQUE (rule_id, day)
 );
 
 CREATE TABLE overrides (

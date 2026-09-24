@@ -125,10 +125,33 @@ class AppRule(Base):
     enabled = Column(Boolean, nullable=False, default=True)
     # always: block even during allowed screen time
     # when_denied: only relevant when session already denied (agent still reports)
+    # quota: allow daily_minutes per local day, then block
     scope = Column(String, nullable=False, default="always")
+    daily_minutes = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     child = relationship("Child", back_populates="app_rules")
+    usages = relationship("AppUsage", back_populates="rule", cascade="all, delete-orphan")
+
+
+class AppUsage(Base):
+    """Minutes a quota-limited program has run on a local day."""
+
+    __tablename__ = "app_usage"
+
+    id = Column(Integer, primary_key=True)
+    child_id = Column(Integer, ForeignKey("children.id", ondelete="CASCADE"), nullable=False)
+    rule_id = Column(Integer, ForeignKey("app_rules.id", ondelete="CASCADE"), nullable=False)
+    day = Column(String, nullable=False)
+    used_minutes = Column(Integer, nullable=False, default=0)
+    remainder_seconds = Column(Integer, nullable=False, default=0)
+    last_seen_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    rule = relationship("AppRule", back_populates="usages")
+
+    __table_args__ = (
+        UniqueConstraint("rule_id", "day", name="uq_app_usage_rule_day"),
+    )
 
 
 class Override(Base):
@@ -244,6 +267,7 @@ def init_db() -> None:
     _ensure_usage_remainder()
     _ensure_command_started_at()
     _ensure_device_setup_ticket()
+    _ensure_app_rule_daily_minutes()
     _lock_down_data_files()
 
 
@@ -282,6 +306,15 @@ def _ensure_usage_remainder() -> None:
         cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(daily_usage)").fetchall()}
         if "remainder_seconds" not in cols:
             conn.exec_driver_sql("ALTER TABLE daily_usage ADD COLUMN remainder_seconds INTEGER NOT NULL DEFAULT 0")
+
+
+def _ensure_app_rule_daily_minutes() -> None:
+    if not str(engine.url).startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(app_rules)").fetchall()}
+        if "daily_minutes" not in cols:
+            conn.exec_driver_sql("ALTER TABLE app_rules ADD COLUMN daily_minutes INTEGER")
 
 
 def _ensure_command_started_at() -> None:

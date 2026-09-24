@@ -48,6 +48,7 @@ body{
   border-radius:var(--r); border:1px solid var(--border); background:var(--panel);
   box-shadow:0 10px 30px rgba(0,0,0,.25); padding:14px 16px
 }
+.programs{grid-column:1 / -1; border-top:1px solid var(--border); padding-top:10px}
 @media (max-width:1000px){.rowcard{grid-template-columns:1fr}}
 .kidname{font-weight:800; font-size:16px}
 .kiduser{color:var(--muted); font-size:12px; margin-top:4px}
@@ -230,6 +231,24 @@ def render_dashboard(now_iso: str, kids: list[dict], flash: str | None = None, l
 
         slug = escape(k["slug"])
         day_on = reason == "override-day"
+        program_lines = ""
+        for program in k.get("programs") or []:
+            label = program.get("label") or program.get("pattern") or ""
+            if not program.get("enabled"):
+                status = t(lang, "off")
+            elif program.get("scope") == "quota":
+                limit = int(program.get("daily_minutes") or 0)
+                if program.get("exhausted"):
+                    status = t(lang, "quota_spent", limit=limit)
+                else:
+                    status = t(lang, "quota_today", used=int(program.get("used_minutes") or 0), limit=limit)
+            elif program.get("scope") == "when_denied":
+                status = t(lang, "scope_denied")
+            else:
+                status = t(lang, "scope_always")
+            program_lines += f'<div class="small"><b>{escape(label)}</b> · {escape(status)}</div>'
+        if not program_lines:
+            program_lines = f'<p class="small">{escape(t(lang, "no_apps"))}</p>'
         rows += f"""
 <div class="rowcard">
   <div>
@@ -244,6 +263,23 @@ def render_dashboard(now_iso: str, kids: list[dict], flash: str | None = None, l
     <a class="link" href="/ui/child/{slug}">{escape(t(lang, "manage"))}</a>
     <form method="post" action="/ui/grant/{slug}/hour"><button class="btn" {"disabled" if day_on else ""}>+1h</button></form>
     <form method="post" action="/ui/grant/{slug}/day"><button class="btn">{escape(t(lang, "unlimited_off") if day_on else t(lang, "unlimited_today"))}</button></form>
+  </div>
+  <div class="programs">
+    <div class="small">{escape(t(lang, "apps_title"))}</div>
+    {program_lines}
+    <form method="post" action="/ui/child/{slug}/apps/add" class="two" style="margin-top:8px">
+      <div><div class="small">{escape(t(lang, "name"))}</div><input name="label" placeholder="Minecraft" autocomplete="off"/></div>
+      <div><div class="small">{escape(t(lang, "pattern"))}</div><input name="pattern" placeholder="{escape(t(lang, "pattern_ph"))}" required autocomplete="off"/></div>
+      <div>
+        <div class="small">{escape(t(lang, "scope"))}</div>
+        <select name="scope">
+          <option value="always">{escape(t(lang, "scope_always"))}</option>
+          <option value="quota">{escape(t(lang, "scope_quota"))}</option>
+        </select>
+      </div>
+      <div><div class="small">{escape(t(lang, "quota_minutes"))}</div><input name="daily_minutes" type="number" min="1" max="1440" placeholder="30"/></div>
+      <div style="grid-column:1 / -1"><button class="btn" type="submit">{escape(t(lang, "add_block"))}</button></div>
+    </form>
   </div>
 </div>"""
 
@@ -372,17 +408,27 @@ def render_child_page(
     scope_opts = [
         ("always", t(lang, "scope_always")),
         ("when_denied", t(lang, "scope_denied")),
+        ("quota", t(lang, "scope_quota")),
     ]
     enabled_opts = [("1", t(lang, "on")), ("0", t(lang, "off"))]
     app_rows = ""
     for a in apps:
         enabled_val = "1" if a["enabled"] else "0"
+        minutes = "" if a.get("daily_minutes") is None else str(int(a["daily_minutes"]))
+        quota_note = ""
+        if a.get("scope") == "quota":
+            limit = int(a.get("daily_minutes") or 0)
+            if a.get("exhausted"):
+                quota_note = f'<div class="small">{escape(t(lang, "quota_spent", limit=limit))}</div>'
+            else:
+                quota_note = f'<div class="small">{escape(t(lang, "quota_today", used=int(a.get("used_minutes") or 0), limit=limit))}</div>'
         app_rows += f"""
 <form method="post" action="/ui/child/{slug}/apps/{a["id"]}" class="two" style="margin-top:10px">
   <div><div class="small">{escape(t(lang, "name"))}</div><input name="label" value="{escape(a["label"] or "")}"/></div>
   <div><div class="small">{escape(t(lang, "pattern"))}</div><input name="pattern" value="{escape(a["pattern"])}" required/></div>
   <div><div class="small">{escape(t(lang, "match"))}</div>{_select("match_mode", a["match_mode"], match_opts)}</div>
   <div><div class="small">{escape(t(lang, "scope"))}</div>{_select("scope", a["scope"], scope_opts)}</div>
+  <div><div class="small">{escape(t(lang, "quota_minutes"))}</div><input name="daily_minutes" type="number" min="1" max="1440" value="{escape(minutes)}"/>{quota_note}</div>
   <div><div class="small">{escape(t(lang, "status"))}</div>{_select("enabled", enabled_val, enabled_opts)}</div>
   <div style="display:flex;align-items:flex-end;gap:8px">
     <button class="btn" type="submit">{escape(t(lang, "save"))}</button>
@@ -418,6 +464,10 @@ def render_child_page(
       <div>
         <div class="small">{escape(t(lang, "scope"))}</div>
         {_select("scope", "always", scope_opts)}
+      </div>
+      <div>
+        <div class="small">{escape(t(lang, "quota_minutes"))}</div>
+        <input name="daily_minutes" type="number" min="1" max="1440" placeholder="30"/>
       </div>
     </div>
     <div><button class="btn" type="submit">{escape(t(lang, "add_block"))}</button></div>

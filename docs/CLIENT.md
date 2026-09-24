@@ -102,7 +102,8 @@ KIDSCONTROL_DRY_RUN=1 python -m kidscontrol_agent --once --env /pfad/zu/client.e
 1. `POST /api/v1/agent/sync` mit Device-Key  
 2. Wenn Sitzung verboten → Bildschirm/Sitzung sperren (best effort)  
 3. Laufende Prozesse gegen App-Regeln matchen und beenden  
-4. Vorwarnung anzeigen, wenn das Zeitfenster endet  
+4. Programme mit Tageskontingent melden, solange das Kontingent reicht, und danach beenden  
+5. Vorwarnung anzeigen, wenn das Zeitfenster endet  
 
 ## OS-Hinweise
 
