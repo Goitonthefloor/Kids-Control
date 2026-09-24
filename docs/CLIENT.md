@@ -118,6 +118,8 @@ Der Agent läuft als Systemprozess (root bzw. SYSTEM). Ein Kinderkonto ohne Admi
 
 Beim Sync sendet der Agent Versionen der beobachteten Pakete und holt ausstehende Update-Befehle ab (`update_one` / `update_all`). Ergebnisse gehen an `POST /api/v1/agent/commands/{id}/result`.
 
+Zusätzlich meldet der Agent Pakete, für die der Paketmanager eine neuere Version kennt: unter Windows `winget upgrade`, unter Linux `apt list --upgradable`, `dnf check-update` oder `pacman -Qu`. Die Eltern-UI listet diese Stände je Gerät. Gesetzte Häkchen legt „Ausgewählte aktualisieren“ in die Agenten-Warteschlange. „Updates abwählen“ hebt die Häkchen auf, ohne ein Update zu starten.
+
 Linux-Updates laufen als root direkt über apt, dnf oder pacman.
 
 ## SSH (nur Linux, optional)

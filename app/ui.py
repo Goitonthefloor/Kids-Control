@@ -79,6 +79,7 @@ input,select{
   width:100%; padding:10px; border-radius:12px; border:1px solid var(--border);
   background:#0d1012; color:var(--text); outline:none
 }
+input[type="checkbox"]{width:auto; accent-color:#10a37f}
 input:focus,select:focus{border-color:rgba(16,163,127,.65); box-shadow:0 0 0 4px rgba(16,163,127,.12)}
 .flash{padding:10px 12px; border-radius:12px; border:1px solid rgba(16,163,127,.45); background:rgba(16,163,127,.12); margin-top:12px}
 .flash.err{border-color:rgba(179,58,58,.55); background:rgba(179,58,58,.12)}
@@ -570,7 +571,46 @@ def render_child_page(
 </div>
 {version_blocks}"""
 
-    body = f'<div class="grid">{setup_card}{warn_card}{schedule_card}{apps_card}{devices_card}{software_card}</div>'
+    pending_blocks = ""
+    for d in devices:
+        rows = ""
+        for item in d.get("pending") or []:
+            installed = item.get("installed_version") or "–"
+            rows += f"""
+<tr>
+  <td><input type="checkbox" name="package_name" value="{escape(item["package_name"])}"/></td>
+  <td><code>{escape(item["package_name"])}</code></td>
+  <td>{escape(installed)}</td>
+  <td>{escape(item.get("available_version") or "–")}</td>
+  <td>{escape(item.get("source") or "")}</td>
+</tr>"""
+        if rows:
+            pending_blocks += f"""
+<h3 style="margin:16px 0 8px 0;font-size:15px">{escape(d["name"])} · {escape(d["os_family"])}</h3>
+<form method="post" action="/ui/child/{slug}/devices/{d["id"]}/updates">
+  <table>
+    <thead><tr><th>{escape(t(lang, "pending_select"))}</th><th>{escape(t(lang, "package"))}</th><th>{escape(t(lang, "pending_installed"))}</th><th>{escape(t(lang, "pending_available"))}</th><th>{escape(t(lang, "source"))}</th></tr></thead>
+    <tbody>{rows}</tbody>
+  </table>
+  <div class="actions" style="justify-content:flex-start;margin-top:10px">
+    <button class="btn" type="submit">{escape(t(lang, "pending_apply"))}</button>
+    <button class="btn ghost" type="reset">{escape(t(lang, "pending_clear"))}</button>
+  </div>
+</form>"""
+        else:
+            pending_blocks += f"""
+<h3 style="margin:16px 0 8px 0;font-size:15px">{escape(d["name"])} · {escape(d["os_family"])}</h3>
+<p class="small">{escape(t(lang, "pending_none"))}</p>"""
+    if not pending_blocks:
+        pending_blocks = f'<p class="small">{escape(t(lang, "pending_none"))}</p>'
+    pending_card = f"""
+<div class="card">
+  <h2 style="margin:0 0 8px 0;font-size:16px">{escape(t(lang, "pending_title"))}</h2>
+  <p class="small">{escape(t(lang, "pending_intro"))}</p>
+  {pending_blocks}
+</div>"""
+
+    body = f'<div class="grid">{setup_card}{warn_card}{schedule_card}{apps_card}{devices_card}{pending_card}{software_card}</div>'
     return _shell(
         f'{child["display_name"]}',
         t(lang, "child_sub", slug=child["slug"]),

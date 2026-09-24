@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The child page lists pending Windows and Linux updates reported by the agent, with a selection and a button to clear that selection
+
 ## 1.6.0
 
 - The install address opens a form that asks which child the PC belongs to and creates that device
