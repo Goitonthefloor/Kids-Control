@@ -16,6 +16,16 @@ from zoneinfo import ZoneInfo
 from app import config
 from app import __version__
 from app.i18n import t
+from app.install_web import (
+    PROGRESS_CODES,
+    browser_only_message,
+    platform_from_user_agent,
+    progress_line,
+    render_install_form,
+    render_install_message,
+    render_install_progress,
+    wants_install_page,
+)
 from app.oneclick import agent_archive, client_installer
 from app.db import (
     AppRule,
@@ -27,7 +37,9 @@ from app.db import (
     DeviceCommand,
     Override,
     Schedule,
+    ServerSetting,
     SessionLocal,
+    SetupEvent,
     SoftwareItem,
     SoftwareWatch,
     audit,
@@ -135,6 +147,117 @@ def form_int(value, default: int, low: int, high: int) -> int | None:
 
 def setup_command(request: Request, token: str) -> str:
     return f"python -m kidscontrol_agent.setup --server {public_base(request)} --token {token}"
+
+
+def child_install_url(request: Request, token: str) -> str:
+    return f"{public_base(request)}/install/{token}"
+
+
+_INSTALL_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+
+
+def install_lang(request: Request) -> str:
+    query = (request.query_params.get("lang") or "").lower()
+    if query in {"de", "en"}:
+        return query
+    return ui_lang(request)
+
+
+def _install_headers(extra: dict | None = None) -> dict[str, str]:
+    headers = {
+        "Cache-Control": "no-store",
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+    }
+    if extra:
+        headers.update(extra)
+    return headers
+
+
+def _install_attempt_key(request: Request) -> str:
+    host = request.client.host if request.client else ""
+    return f"install:{host}"
+
+
+def household_install_token(db) -> str:
+    row = db.query(ServerSetting).filter_by(key="install_token").one_or_none()
+    if row and row.value:
+        return row.value
+    value = secrets.token_urlsafe(24)
+    db.add(ServerSetting(key="install_token", value=value))
+    db.commit()
+    return value
+
+
+def _same_secret(left: str, right: str) -> bool:
+    if not left or not right or len(left) != len(right):
+        return False
+    return secrets.compare_digest(left, right)
+
+
+def _children_for_install_token(db, token: str) -> list[Child] | None:
+    if not _INSTALL_TOKEN_RE.fullmatch(token or ""):
+        return None
+    if _same_secret(token, household_install_token(db)):
+        return db.query(Child).filter_by(active=True).order_by(Child.display_name.asc()).all()
+    child = db.query(Child).filter_by(enroll_token=token, active=True).first()
+    if not child:
+        return None
+    return [child]
+
+
+def _install_error(request: Request, status: int, key: str) -> HTMLResponse:
+    lang = install_lang(request)
+    page = render_install_message(lang, t(lang, key))
+    return HTMLResponse(page, status_code=status, headers=_install_headers())
+
+
+def _gate_install_token(request: Request, token: str) -> HTMLResponse | None:
+    attempt_key = _install_attempt_key(request)
+    if too_many_failures(attempt_key):
+        return _install_error(request, 429, "install_throttled")
+    db = SessionLocal()
+    try:
+        children = _children_for_install_token(db, token)
+    finally:
+        db.close()
+    if children is None:
+        record_failure(attempt_key)
+        return _install_error(request, 404, "install_invalid")
+    clear_failures(attempt_key)
+    return None
+
+
+def _clean_device_name(raw: str) -> str | None:
+    name = " ".join((raw or "").split())
+    if not name or len(name) > 80:
+        return None
+    return name
+
+
+def _safe_progress_detail(raw: str) -> str:
+    return " ".join((raw or "").split())[:180]
+
+
+def _setup_snapshot(db, device: Device, lang: str) -> dict:
+    child = db.query(Child).filter_by(id=device.child_id).first()
+    child_name = child.display_name if child else ""
+    events = db.query(SetupEvent).filter_by(device_id=device.id).order_by(SetupEvent.id.asc()).all()
+    messages = [
+        progress_line(lang, event.code, child=child_name, device=device.name, detail=event.detail or "")
+        for event in events
+    ]
+    last = next((event.code for event in reversed(events) if event.code in {"finished", "failed"}), None)
+    done = last == "finished"
+    return {
+        "messages": messages,
+        "done": done,
+        "ok": done,
+        "child": child_name,
+        "device": device.name,
+        "success": t(lang, "install_success", device=device.name, child=child_name),
+        "failure": t(lang, "install_failure"),
+    }
 
 
 def logged_in(request: Request) -> str | None:
@@ -320,8 +443,15 @@ def dashboard(request: Request):
                 }
             )
         flash = request.session.pop("flash", None)
+        install_url = child_install_url(request, household_install_token(db))
         return HTMLResponse(
-            render_dashboard(now_local().isoformat(timespec="seconds"), kids_out, flash=flash, lang=ui_lang(request))
+            render_dashboard(
+                now_local().isoformat(timespec="seconds"),
+                kids_out,
+                flash=flash,
+                lang=ui_lang(request),
+                install_url=install_url,
+            )
         )
     finally:
         db.close()
@@ -468,6 +598,7 @@ def child_page(request: Request, slug: str):
                 watches=watches,
                 lang=ui_lang(request),
                 setup_command=setup_command(request, child.enroll_token),
+                install_url=child_install_url(request, household_install_token(db)),
             )
         )
     finally:
@@ -516,6 +647,183 @@ def oneclick_installer(request: Request, slug: str, platform: str):
         content=body,
         media_type=media,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _install_platform(request: Request) -> str | None:
+    return platform_from_user_agent(
+        request.headers.get("user-agent") or "",
+        request.headers.get("sec-ch-ua-platform") or "",
+    )
+
+
+def _child_choices(children: list[Child]) -> list[dict]:
+    return [{"slug": child.slug, "display_name": child.display_name} for child in children]
+
+
+@app.get("/install/{token}")
+def install_landing(request: Request, token: str):
+    """Open on the child PC. The form asks which child this PC belongs to."""
+    denied = _gate_install_token(request, token)
+    if denied:
+        return denied
+    user_agent = request.headers.get("user-agent") or ""
+    accept = request.headers.get("accept") or ""
+    if not wants_install_page(accept, user_agent):
+        return Response(
+            content=browser_only_message(child_install_url(request, token)),
+            media_type="text/plain; charset=utf-8",
+            headers=_install_headers(),
+        )
+    db = SessionLocal()
+    try:
+        children = _children_for_install_token(db, token) or []
+        choices = _child_choices(children)
+    finally:
+        db.close()
+    page = render_install_form(
+        lang=install_lang(request),
+        token=token,
+        children=choices,
+        platform=_install_platform(request),
+    )
+    return HTMLResponse(page, headers=_install_headers())
+
+
+@app.post("/install/{token}")
+def install_assign(request: Request, token: str, child_slug: str = Form(""), device_name: str = Form("")):
+    """Create the device row for the child chosen on this PC."""
+    denied = _gate_install_token(request, token)
+    if denied:
+        return denied
+    lang = install_lang(request)
+    slug = (child_slug or "").strip().lower()
+    name = _clean_device_name(device_name)
+    db = SessionLocal()
+    try:
+        children = _children_for_install_token(db, token) or []
+        allowed = {child.slug: child for child in children}
+        form_error = ""
+        if slug not in allowed:
+            form_error = t(lang, "install_need_child")
+        elif name is None:
+            form_error = t(lang, "install_need_name")
+        if form_error or name is None:
+            page = render_install_form(
+                lang=lang,
+                token=token,
+                children=_child_choices(children),
+                platform=_install_platform(request),
+                error=form_error or t(lang, "install_need_name"),
+            )
+            return HTMLResponse(page, status_code=400, headers=_install_headers())
+        child = allowed[slug]
+        ticket = secrets.token_urlsafe(24)
+        device = Device(
+            child_id=child.id,
+            name=name,
+            device_key=secrets.token_urlsafe(24),
+            os_family=_install_platform(request) or "unknown",
+            setup_ticket=ticket,
+        )
+        db.add(device)
+        db.flush()
+        db.add(SetupEvent(device_id=device.id, code="device_created"))
+        audit(db, actor="web-install", action="DEVICE_ENROLL", child_slug=child.slug, details=name)
+        db.commit()
+    finally:
+        db.close()
+    return RedirectResponse(f"/install/{token}/go/{ticket}", status_code=303)
+
+
+@app.get("/install/{token}/go/{ticket}")
+def install_progress_page(request: Request, token: str, ticket: str):
+    denied = _gate_install_token(request, token)
+    if denied:
+        return denied
+    lang = install_lang(request)
+    db = SessionLocal()
+    try:
+        device = _device_for_install(db, token, ticket)
+        if not device:
+            return _install_error(request, 404, "install_invalid")
+        snapshot = _setup_snapshot(db, device, lang)
+        child_name = snapshot["child"]
+        device_name = snapshot["device"]
+    finally:
+        db.close()
+    page = render_install_progress(
+        lang=lang,
+        token=token,
+        ticket=ticket,
+        child_name=child_name,
+        device_name=device_name,
+        platform=_install_platform(request),
+        messages=snapshot["messages"],
+        done=bool(snapshot["done"]),
+        ok=bool(snapshot["ok"]),
+    )
+    return HTMLResponse(page, headers=_install_headers())
+
+
+@app.get("/install/{token}/status/{ticket}")
+def install_status(request: Request, token: str, ticket: str):
+    denied = _gate_install_token(request, token)
+    if denied:
+        return denied
+    db = SessionLocal()
+    try:
+        device = _device_for_install(db, token, ticket)
+        if not device:
+            return _install_error(request, 404, "install_invalid")
+        snapshot = _setup_snapshot(db, device, install_lang(request))
+    finally:
+        db.close()
+    return JSONResponse(snapshot, headers=_install_headers())
+
+
+@app.get("/install/{token}/{platform}")
+def install_for_platform(request: Request, token: str, platform: str, ticket: str = ""):
+    """Installer for the device created by the form. The ticket ties the file to that entry."""
+    denied = _gate_install_token(request, token)
+    if denied:
+        return denied
+    if platform not in {"linux", "macos", "windows"}:
+        return _install_error(request, 404, "install_unknown")
+    if not ticket:
+        return _install_error(request, 400, "install_need_ticket")
+    db = SessionLocal()
+    try:
+        device = _device_for_install(db, token, ticket)
+    finally:
+        db.close()
+    if not device:
+        record_failure(_install_attempt_key(request))
+        return _install_error(request, 404, "install_invalid")
+    return _install_file(request, platform, ticket)
+
+
+def _device_for_install(db, token: str, ticket: str) -> Device | None:
+    if not _INSTALL_TOKEN_RE.fullmatch(ticket or ""):
+        return None
+    device = db.query(Device).filter_by(setup_ticket=ticket).first()
+    if not device:
+        return None
+    children = _children_for_install_token(db, token) or []
+    if not any(child.id == device.child_id for child in children):
+        return None
+    return device
+
+
+def _install_file(request: Request, platform: str, ticket: str) -> Response:
+    try:
+        filename, media, body = client_installer(platform, server=public_base(request), ticket=ticket)
+    except ValueError:
+        return _install_error(request, 400, "install_invalid")
+    return Response(
+        content=body,
+        media_type=media,
+        headers=_install_headers({"Content-Disposition": f'attachment; filename="{filename}"'}),
     )
 
 
@@ -1116,6 +1424,112 @@ def _release_stale_commands(db, device_id: int) -> None:
         if now - stamp > timedelta(minutes=60):
             cmd.status = "pending"
             cmd.started_at = None
+
+
+def _device_by_ticket(db, ticket: str) -> Device | None:
+    if not _INSTALL_TOKEN_RE.fullmatch(ticket or ""):
+        return None
+    return db.query(Device).filter_by(setup_ticket=ticket).first()
+
+
+def _setup_is_finished(db, device_id: int) -> bool:
+    return (
+        db.query(SetupEvent).filter_by(device_id=device_id, code="finished").first() is not None
+    )
+
+
+@app.post("/api/v1/setup/progress")
+async def setup_progress(request: Request):
+    """Confirmation the child PC shows in the browser while setup runs."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    ticket = str(body.get("ticket") or "").strip()
+    code = str(body.get("code") or "").strip()
+    attempt_key = f"progress:{request.client.host if request.client else ''}"
+    if too_many_failures(attempt_key):
+        return JSONResponse({"error": "too_many_attempts"}, status_code=429)
+    if code not in PROGRESS_CODES:
+        return JSONResponse({"error": "unknown_progress"}, status_code=400)
+    db = SessionLocal()
+    try:
+        device = _device_by_ticket(db, ticket)
+        if not device:
+            record_failure(attempt_key)
+            return JSONResponse({"error": "unknown_ticket"}, status_code=404)
+        clear_failures(attempt_key)
+        count = db.query(SetupEvent).filter_by(device_id=device.id).count()
+        if count >= 40:
+            return JSONResponse({"error": "too_many_messages"}, status_code=409)
+        if _setup_is_finished(db, device.id):
+            return JSONResponse({"error": "setup_finished"}, status_code=409)
+        detail = _safe_progress_detail(str(body.get("detail") or "")) if code == "failed" else ""
+        db.add(SetupEvent(device_id=device.id, code=code, detail=detail or None))
+        db.commit()
+        return JSONResponse({"ok": True})
+    finally:
+        db.close()
+
+
+@app.post("/api/v1/setup/claim")
+async def setup_claim(request: Request):
+    """The installer sends hostname, OS, and the SSH key for the entry the form created."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    ticket = str(body.get("ticket") or "").strip()
+    attempt_key = f"claim:{request.client.host if request.client else ''}"
+    if too_many_failures(attempt_key):
+        return JSONResponse({"error": "too_many_attempts"}, status_code=429)
+    os_family = _normalize_os(str(body.get("os") or body.get("os_family") or "unknown"))
+    host_name = str(body.get("hostname") or "").strip() or None
+    host_pubkey = normalize_host_pubkey(str(body.get("ssh_host_key") or ""))
+    if host_pubkey is None:
+        return JSONResponse({"error": "invalid_host_key"}, status_code=400)
+    db = SessionLocal()
+    try:
+        device = _device_by_ticket(db, ticket)
+        if not device:
+            record_failure(attempt_key)
+            return JSONResponse({"error": "unknown_ticket"}, status_code=404)
+        if _setup_is_finished(db, device.id):
+            return JSONResponse({"error": "setup_finished"}, status_code=409)
+        clear_failures(attempt_key)
+        child = db.query(Child).filter_by(id=device.child_id).first()
+        if not child or not child.active:
+            return JSONResponse({"error": "unknown_child"}, status_code=404)
+        device.os_family = os_family
+        device.hostname = host_name
+        device.ssh_host_pubkey = host_pubkey or None
+        private_key = str(body.get("ssh_private_key") or "")
+        ssh_user = str(body.get("ssh_user") or "").strip() or None
+        if private_key.strip():
+            device.ssh_user = ssh_user
+            device.ssh_host = host_name
+            device.ssh_port = 22
+            device.ssh_enabled = os_family == "linux"
+            try:
+                path = store_private_key(device.id, private_key)
+            except ValueError:
+                db.rollback()
+                return JSONResponse({"error": "invalid_private_key"}, status_code=400)
+            device.ssh_key_path = str(path)
+        audit(db, actor="client-setup", action="DEVICE_CLAIM", child_slug=child.slug, details=device.name)
+        db.commit()
+        return JSONResponse(
+            {
+                "device_key": device.device_key,
+                "device_name": device.name,
+                "child": {"slug": child.slug, "display_name": child.display_name},
+                "poll_interval_seconds": config.AGENT_POLL_SECONDS,
+                "ssh_ready": bool(device.ssh_key_path),
+            },
+            headers=_install_headers(),
+        )
+    finally:
+        db.close()
 
 
 @app.post("/api/v1/setup/enroll")

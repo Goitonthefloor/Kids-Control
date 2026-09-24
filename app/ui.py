@@ -208,7 +208,7 @@ def render_login(admin_user: str, error: str | None = None, lang: str = "de") ->
     return _shell("KidsControl", t(lang, "login_sub"), body, nav="", lang=lang)
 
 
-def render_dashboard(now_iso: str, kids: list[dict], flash: str | None = None, lang: str = "de") -> str:
+def render_dashboard(now_iso: str, kids: list[dict], flash: str | None = None, lang: str = "de", install_url: str = "") -> str:
     rows = ""
     for k in kids:
         st = k.get("state") or {}
@@ -262,7 +262,15 @@ def render_dashboard(now_iso: str, kids: list[dict], flash: str | None = None, l
 </div>"""
 
     nav = f'<a href="/dashboard">{escape(t(lang, "dashboard"))}</a><a href="/ui/audit">{escape(t(lang, "audit"))}</a><a href="/logout">{escape(t(lang, "logout"))}</a>'
-    body = f'<div class="grid">{rows}{add_form}</div><p class="small" style="margin-top:12px">{escape(t(lang, "decision_order"))}</p>'
+    install_card = ""
+    if install_url:
+        install_card = f"""
+<div class="card">
+  <h2 style="margin:0 0 8px 0;font-size:16px">{escape(t(lang, "dashboard_install_title"))}</h2>
+  <p class="small">{escape(t(lang, "dashboard_install_hint"))}</p>
+  <pre style="white-space:pre-wrap;background:#0d1012;border:1px solid var(--border);border-radius:12px;padding:12px"><code>{escape(install_url)}</code></pre>
+</div>"""
+    body = f'{install_card}<div class="grid">{rows}{add_form}</div><p class="small" style="margin-top:12px">{escape(t(lang, "decision_order"))}</p>'
     return _shell("KidsControl", t(lang, "server_time", time=now_iso), body, nav=nav, flash=flash, lang=lang)
 
 
@@ -284,6 +292,7 @@ def render_child_page(
     watches: list[dict] | None = None,
     lang: str = "de",
     setup_command: str = "",
+    install_url: str = "",
 ) -> str:
     slug = escape(child["slug"])
     nav = (
@@ -299,6 +308,9 @@ def render_child_page(
   <form method="post" action="/ui/child/{slug}/enroll-token" style="margin:0 0 12px 0">
     <button class="btn ghost" type="submit">{escape(t(lang, "new_enroll_code"))}</button>
   </form>
+  <div class="small" style="margin-top:8px">{escape(t(lang, "install_url_label"))}</div>
+  <pre style="white-space:pre-wrap;background:#0d1012;border:1px solid var(--border);border-radius:12px;padding:12px"><code>{escape(install_url)}</code></pre>
+  <p class="small" style="margin-top:10px">{escape(t(lang, "install_url_hint"))}</p>
   <div class="small" style="margin-top:8px">{escape(t(lang, "client_setup_cmd_label"))}</div>
   <pre style="white-space:pre-wrap;background:#0d1012;border:1px solid var(--border);border-radius:12px;padding:12px"><code>{escape(setup_command)}</code></pre>
   <p class="small" style="margin-top:10px">{escape(t(lang, "oneclick_hint"))}</p>

@@ -422,6 +422,181 @@ def test_oneclick_installer_and_agent_archive(client):
         assert "kidscontrol_agent/setup.py" in archive.namelist()
 
 
+def test_platform_from_user_agent():
+    from app.install_web import platform_from_user_agent, wants_install_page
+
+    windows = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0"
+    macos = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 Version/17.5 Safari/605.1.15"
+    linux = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0"
+    assert platform_from_user_agent(windows) == "windows"
+    assert platform_from_user_agent(macos) == "macos"
+    assert platform_from_user_agent(linux) == "linux"
+    assert platform_from_user_agent("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X)") is None
+    assert platform_from_user_agent("curl/8.5.0") is None
+    assert platform_from_user_agent("curl/8.5.0", '"Windows"') == "windows"
+    assert wants_install_page("text/html,application/xhtml+xml", windows) is True
+    assert wants_install_page("*/*", "curl/8.5.0") is False
+    assert wants_install_page("*/*", windows) is True
+
+
+def test_web_install_assigns_child_and_confirms(client):
+    import re
+
+    from app.guards import clear_failures
+
+    login(client)
+    created = client.post("/ui/children/add", data={"display_name": "Nora"}, follow_redirects=False)
+    assert created.status_code == 302
+    other = client.post("/ui/children/add", data={"display_name": "Nils"}, follow_redirects=False)
+    assert other.status_code == 302
+    page = client.get("/ui/child/nora")
+    dashboard = client.get("/dashboard")
+    match = re.search(r"/install/([A-Za-z0-9_-]{16,64})", page.text)
+    assert match
+    token = match.group(1)
+    assert f"/install/{token}" in dashboard.text
+    assert "Welchem Kind gehört dieser PC?" not in page.text
+    assert "Adresse für den Kinder-PC" in page.text
+
+    db = SessionLocal()
+    try:
+        enroll = db.query(Child).filter_by(slug="nora").one().enroll_token
+    finally:
+        db.close()
+    assert token != enroll
+
+    headers = {
+        "Accept": "text/html",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0",
+    }
+    form = client.get(f"/install/{token}", headers=headers)
+    assert form.status_code == 200
+    assert "no-store" in form.headers["cache-control"]
+    assert "Welchem Kind gehört dieser PC?" in form.text
+    assert 'value="nora"' in form.text
+    assert 'value="nils"' in form.text
+    assert 'id="kc-install"' not in form.text
+    assert "Erkanntes System: Linux." in form.text
+
+    only_nora = client.get(f"/install/{enroll}", headers=headers)
+    assert 'value="nora"' in only_nora.text
+    assert 'value="nils"' not in only_nora.text
+
+    english = client.get(f"/install/{token}?lang=en", headers=headers)
+    assert "Which child does this PC belong to?" in english.text
+
+    missing_child = client.post(
+        f"/install/{token}",
+        data={"child_slug": "nicht-da", "device_name": "Zimmer-PC"},
+        headers=headers,
+    )
+    assert missing_child.status_code == 400
+    assert "Wähle das Kind" in missing_child.text
+
+    assigned = client.post(
+        f"/install/{token}",
+        data={"child_slug": "nora", "device_name": "Zimmer-PC"},
+        headers=headers,
+        follow_redirects=False,
+    )
+    assert assigned.status_code == 303
+    ticket = assigned.headers["location"].rsplit("/", 1)[-1]
+    progress = client.get(assigned.headers["location"], headers=headers)
+    assert progress.status_code == 200
+    assert "Eintrag angelegt: Zimmer-PC gehört zu Nora." in progress.text
+    assert 'id="kc-install"' in progress.text
+    assert f"/install/{token}/linux?ticket={ticket}" in progress.text
+    assert "kc-log" in progress.text
+
+    child_page = client.get("/ui/child/nora")
+    assert "Zimmer-PC" in child_page.text
+
+    status = client.get(f"/install/{token}/status/{ticket}", headers={"Accept": "application/json"})
+    body = status.json()
+    assert body["done"] is False
+    assert body["device"] == "Zimmer-PC"
+    assert any("Eintrag angelegt" in line for line in body["messages"])
+
+    posted = client.post(
+        "/api/v1/setup/progress",
+        json={"ticket": ticket, "code": "installer_opened"},
+    )
+    assert posted.status_code == 200
+    rejected = client.post("/api/v1/setup/progress", json={"ticket": ticket, "code": "rm -rf /"})
+    assert rejected.status_code == 400
+
+    key_body = "-----BEGIN OPENSSH PRIVATE KEY-----\nQUJD\n-----END OPENSSH PRIVATE KEY-----\n"
+    pubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKidsControlHostKeyPinTest comment"
+    claimed = client.post(
+        "/api/v1/setup/claim",
+        json={
+            "ticket": ticket,
+            "os": "linux",
+            "hostname": "nora-pc",
+            "ssh_user": "root",
+            "ssh_host_key": pubkey,
+            "ssh_private_key": key_body,
+        },
+    )
+    assert claimed.status_code == 200
+    assert claimed.json()["child"]["display_name"] == "Nora"
+    device_key = claimed.json()["device_key"]
+    assert "Zimmer-PC" == claimed.json()["device_name"]
+
+    client.post("/api/v1/setup/progress", json={"ticket": ticket, "code": "identity_sent"})
+    client.post("/api/v1/setup/progress", json={"ticket": ticket, "code": "service_started"})
+    finished = client.post("/api/v1/setup/progress", json={"ticket": ticket, "code": "finished"})
+    assert finished.status_code == 200
+    again = client.post(
+        "/api/v1/setup/claim",
+        json={"ticket": ticket, "os": "linux", "hostname": "nora-pc", "ssh_host_key": ""},
+    )
+    assert again.status_code == 409
+
+    done = client.get(f"/install/{token}/status/{ticket}", headers={"Accept": "application/json"})
+    assert done.json()["done"] is True
+    assert done.json()["ok"] is True
+    assert any("Der Installer auf diesem PC wurde gestartet." in line for line in done.json()["messages"])
+    assert any("Einrichtung abgeschlossen" in line for line in done.json()["messages"])
+    assert device_key not in done.text
+
+    linux = client.get(f"/install/{token}/linux", params={"ticket": ticket})
+    assert linux.status_code == 200
+    assert 'filename="kidscontrol-setup.sh"' in linux.headers["content-disposition"]
+    assert f'--ticket "{ticket}"' in linux.text or f"--ticket {ticket}" in linux.text or f'TICKET="{ticket}"' in linux.text
+    assert "api/v1/setup/progress" in linux.text
+    assert "kidscontrol_agent.setup" in linux.text
+    assert device_key not in linux.text
+    bare = client.get(f"/install/{token}/linux")
+    assert bare.status_code == 400
+
+    boot = client.get(f"/install/{token}", headers={"User-Agent": "curl/8.5.0", "Accept": "*/*"})
+    assert "welchem Kind" in boot.text
+    assert "uname -s" not in boot.text
+
+    missing = client.get("/install/this-token-does-not-exist", headers=headers)
+    assert missing.status_code == 404
+    assert "this-token-does-not-exist" not in missing.text
+    clear_failures("install:testclient")
+
+    gone = client.get(f"/install/{token}/android")
+    assert gone.status_code == 404
+
+
+def test_install_token_is_throttled(client):
+    from app.guards import clear_failures
+
+    try:
+        for _ in range(8):
+            blocked = client.get("/install/not-a-real-token-value", headers={"Accept": "text/html"})
+            assert blocked.status_code == 404
+        again = client.get("/install/not-a-real-token-value", headers={"Accept": "text/html"})
+        assert again.status_code == 429
+        assert "Zu viele Versuche" in again.text
+    finally:
+        clear_failures("install:testclient")
+
+
 def test_process_match_helper():
     from kidscontrol_agent.enforce import matches_rule
 

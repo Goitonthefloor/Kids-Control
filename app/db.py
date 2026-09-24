@@ -67,10 +67,32 @@ class Device(Base):
     ssh_user = Column(String, nullable=True)
     ssh_key_path = Column(String, nullable=True)
     ssh_host_pubkey = Column(String, nullable=True)
+    setup_ticket = Column(String, unique=True, nullable=True)
 
     child = relationship("Child", back_populates="devices")
     software = relationship("SoftwareItem", back_populates="device", cascade="all, delete-orphan")
     commands = relationship("DeviceCommand", back_populates="device", cascade="all, delete-orphan")
+
+
+class ServerSetting(Base):
+    """Small key-value rows. The household install address is stored here."""
+
+    __tablename__ = "server_settings"
+
+    key = Column(String, primary_key=True)
+    value = Column(String, nullable=False)
+
+
+class SetupEvent(Base):
+    """One visible step while a child PC is being enrolled from the browser."""
+
+    __tablename__ = "setup_events"
+
+    id = Column(Integer, primary_key=True)
+    device_id = Column(Integer, ForeignKey("devices.id", ondelete="CASCADE"), nullable=False, index=True)
+    code = Column(String, nullable=False)
+    detail = Column(String, nullable=True)
+    at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 
 class Schedule(Base):
@@ -221,6 +243,7 @@ def init_db() -> None:
     _ensure_child_enroll_token()
     _ensure_usage_remainder()
     _ensure_command_started_at()
+    _ensure_device_setup_ticket()
     _lock_down_data_files()
 
 
@@ -268,6 +291,15 @@ def _ensure_command_started_at() -> None:
         cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(device_commands)").fetchall()}
         if "started_at" not in cols:
             conn.exec_driver_sql("ALTER TABLE device_commands ADD COLUMN started_at DATETIME")
+
+
+def _ensure_device_setup_ticket() -> None:
+    if not str(engine.url).startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(devices)").fetchall()}
+        if "setup_ticket" not in cols:
+            conn.exec_driver_sql("ALTER TABLE devices ADD COLUMN setup_ticket VARCHAR")
 
 
 def _lock_down_data_files() -> None:

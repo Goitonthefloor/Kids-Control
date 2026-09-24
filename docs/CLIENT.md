@@ -1,12 +1,23 @@
 # KidsControl – Client Agent
 
-Version: v1.4.0
+Version: v1.6.0
 
 Der Agent läuft auf dem Kinder-PC und holt Regeln vom zentralen Server.
 
+## Per Adresse im Browser
+
+Auf der Übersicht und auf der Kind-Seite steht eine Adresse, zum Beispiel `http://192.168.1.10:8000/install/…`. Auf dem Kinder-PC die Adresse im Browser öffnen.
+
+1. Die Maske fragt, welchem Kind der PC gehört, und nach einem Namen.
+2. Der Eintrag wird angelegt. Die Seite bestätigt das sofort.
+3. Der Installer für das erkannte System wird heruntergeladen. Die Datei starten und die Administratorabfrage bestätigen.
+4. Der PC schickt Name, System und Schlüssel an den Server. Jede Rückmeldung erscheint in der Liste auf der Seite: Installer gestartet, Python bereit, Agent geladen, Daten übertragen, Dienst gestartet, fertig.
+
+Dieselbe Adresse gilt für weitere PCs. Pro PC einmal das Kind wählen.
+
 ## One-Click
 
-Auf der Kind-Seite die passende Datei herunterladen und auf dem Kinder-PC starten:
+Wer die Datei am Eltern-Rechner speichern will, lädt sie auf der Kind-Seite herunter und startet sie auf dem Kinder-PC:
 
 - Linux: `bash kidscontrol-setup.sh`
 - macOS: `bash kidscontrol-setup.command`
