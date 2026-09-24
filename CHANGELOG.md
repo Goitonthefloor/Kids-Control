@@ -4,6 +4,7 @@
 
 - Each child card can block a program or give it a daily minute quota; the agent stops the program when the quota is used up
 - The child PC warns once each when a running program has 5, 2, or 1 minute of quota left
+- `python -m kidscontrol_agent --settings` chooses whether those warnings are a message window or a toast; the choice is stored next to `client.env`
 
 ## 1.6.0
 

@@ -27,6 +27,7 @@ from kidscontrol_agent.inventory import (
     save_cached_quota,
     save_cached_watches,
 )
+from kidscontrol_agent.notify_style import set_active_env
 from kidscontrol_agent.quota_warn import warn_running_quotas
 
 
@@ -167,6 +168,11 @@ def main(argv: list[str] | None = None) -> int:
             env_path = argv[i + 1]
         if arg == "--once":
             once = True
+    set_active_env(env_path)
+    if "--settings" in argv:
+        from kidscontrol_agent.settings import open_settings
+
+        return open_settings()
     cfg = load_config(env_path)
     if once:
         return run_once(cfg)

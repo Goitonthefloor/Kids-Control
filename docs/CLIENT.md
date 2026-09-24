@@ -106,6 +106,14 @@ KIDSCONTROL_DRY_RUN=1 python -m kidscontrol_agent --once --env /pfad/zu/client.e
 5. Warnen, solange so ein Programm läuft und noch 5, 2 oder 1 Minute übrig sind. Jede Stufe einmal.  
 6. Vorwarnung anzeigen, wenn das Zeitfenster endet  
 
+Die Art der Warnung stellt das Menü auf dem Kinder-PC ein:
+
+```bash
+python3 -m kidscontrol_agent --settings
+```
+
+**Meldungsfenster** bleibt offen, bis es bestätigt wird. **Toast** ist ein kurzer Hinweis und verschwindet von selbst. Ohne Auswahl bleibt es beim bisherigen Verhalten: Windows zeigt ein Fenster, Linux und macOS einen Toast. Die Auswahl liegt neben `client.env` und gilt ab der nächsten Warnung. Das Menü braucht dieselben Rechte wie der Agent, sonst kann es die Datei nicht schreiben.  
+
 ## OS-Hinweise
 
 | OS | Prozessliste | Beenden | Sitzungssperre |

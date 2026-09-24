@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import platform
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 
@@ -191,47 +192,120 @@ def user_session_active() -> bool:
     return True
 
 
-def notify(title: str, message: str, *, dry_run: bool = False) -> None:
+def notify(title: str, message: str, *, dry_run: bool = False, style: str | None = None) -> None:
     if dry_run:
         print(f"[notify] {title}: {message}")
         return
+    from kidscontrol_agent.notify_style import load_notify_style, normalize_style
+
+    chosen = normalize_style(style) or load_notify_style()
     os_name = detect_os()
     try:
-        if os_name == "linux":
-            subprocess.run(["notify-send", "--", title, message], check=False, capture_output=True)
-        elif os_name == "macos":
-            subprocess.run(
-                [
-                    "osascript",
-                    "-e",
-                    "on run argv",
-                    "-e",
-                    "display notification (item 1 of argv) with title (item 2 of argv)",
-                    "-e",
-                    "end run",
-                    "--",
-                    message,
-                    title,
-                ],
-                check=False,
-                capture_output=True,
-            )
-        elif os_name == "windows":
-            env = os.environ.copy()
-            env["KC_TITLE"] = title
-            env["KC_MESSAGE"] = message
-            ps = (
-                "Add-Type -AssemblyName System.Windows.Forms; "
-                "[System.Windows.Forms.MessageBox]::Show($env:KC_MESSAGE, $env:KC_TITLE)"
-            )
-            subprocess.run(
-                ["powershell", "-NoProfile", "-Command", ps],
-                check=False,
-                capture_output=True,
-                env=env,
-            )
+        if chosen == "window":
+            _notify_window(os_name, title, message)
+        else:
+            _notify_toast(os_name, title, message)
     except Exception:
         pass
+
+
+def _notify_env(title: str, message: str) -> dict[str, str]:
+    env = os.environ.copy()
+    env["KC_TITLE"] = title
+    env["KC_MESSAGE"] = message
+    return env
+
+
+def _notify_toast(os_name: str, title: str, message: str) -> None:
+    if os_name == "linux":
+        subprocess.run(["notify-send", "--", title, message], check=False, capture_output=True)
+        return
+    if os_name == "macos":
+        subprocess.run(
+            [
+                "osascript",
+                "-e",
+                "on run argv",
+                "-e",
+                "display notification (item 1 of argv) with title (item 2 of argv)",
+                "-e",
+                "end run",
+                "--",
+                message,
+                title,
+            ],
+            check=False,
+            capture_output=True,
+        )
+        return
+    if os_name == "windows":
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "Add-Type -AssemblyName System.Drawing; "
+            "$n = New-Object System.Windows.Forms.NotifyIcon; "
+            "$n.Icon = [System.Drawing.SystemIcons]::Information; "
+            "$n.Visible = $true; "
+            "$n.ShowBalloonTip(8000, $env:KC_TITLE, $env:KC_MESSAGE, "
+            "[System.Windows.Forms.ToolTipIcon]::Info); "
+            "Start-Sleep -Seconds 6; $n.Dispose()"
+        )
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps],
+            check=False,
+            capture_output=True,
+            env=_notify_env(title, message),
+        )
+
+
+def _notify_window(os_name: str, title: str, message: str) -> None:
+    if os_name == "linux" and shutil.which("zenity"):
+        subprocess.run(
+            ["zenity", "--warning", "--title", title, "--text", message],
+            check=False,
+            capture_output=True,
+        )
+        return
+    if os_name == "macos":
+        subprocess.run(
+            [
+                "osascript",
+                "-e",
+                "on run argv",
+                "-e",
+                "display dialog (item 1 of argv) with title (item 2 of argv) buttons {\"OK\"} default button 1",
+                "-e",
+                "end run",
+                "--",
+                message,
+                title,
+            ],
+            check=False,
+            capture_output=True,
+        )
+        return
+    if os_name == "windows":
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "[System.Windows.Forms.MessageBox]::Show($env:KC_MESSAGE, $env:KC_TITLE)"
+        )
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps],
+            check=False,
+            capture_output=True,
+            env=_notify_env(title, message),
+        )
+        return
+    _tk_message(title, message)
+
+
+def _tk_message(title: str, message: str) -> None:
+    import tkinter as tk
+    from tkinter import messagebox
+
+    root = tk.Tk()
+    root.withdraw()
+    messagebox.showwarning(title, message)
+    root.destroy()
 
 
 def _lock_windows() -> None:
