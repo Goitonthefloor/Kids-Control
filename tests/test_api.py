@@ -790,3 +790,110 @@ def test_stale_running_command_returns_to_pending(client):
         assert db.query(DeviceCommand).filter_by(id=cid).one().status == "pending"
     finally:
         db.close()
+
+
+def test_pending_updates_are_listed_and_selectable(client):
+    login(client)
+    client.post("/ui/children/add", data={"display_name": "Ida", "slug": "ida"}, follow_redirects=False)
+    client.post(
+        "/ui/child/ida/devices/add",
+        data={"name": "Laptop", "os_family": "windows"},
+        follow_redirects=False,
+    )
+    db = SessionLocal()
+    try:
+        from app.db import Child, Device
+
+        child = db.query(Child).filter_by(slug="ida").one()
+        device = db.query(Device).filter_by(child_id=child.id).one()
+        key = device.device_key
+        device_id = device.id
+    finally:
+        db.close()
+
+    reported = client.post(
+        "/api/v1/agent/sync",
+        headers={"X-Device-Key": key},
+        json={
+            "active": False,
+            "os": "windows",
+            "pending_updates": [
+                {"name": "Mozilla.Firefox", "version": "128.0.2", "available": "130.0.1", "source": "winget"},
+                {"name": "VideoLAN.VLC", "version": "3.0.20", "available": "3.0.21", "source": "winget"},
+                {"name": "firefox;rm -rf /", "version": "1", "available": "2", "source": "winget"},
+                {"name": "notepad", "version": "1", "available": "not-a-version", "source": "winget"},
+            ],
+        },
+    )
+    assert reported.status_code == 200
+
+    page = client.get("/ui/child/ida")
+    assert page.status_code == 200
+    assert "Ausstehende Updates" in page.text
+    assert "Mozilla.Firefox" in page.text
+    assert "130.0.1" in page.text
+    assert "VideoLAN.VLC" in page.text
+    assert 'type="checkbox"' in page.text
+    assert "Ausgewählte aktualisieren" in page.text
+    assert 'type="reset"' in page.text
+    assert "Updates abwählen" in page.text
+    assert "firefox;rm" not in page.text
+
+    empty = client.post(
+        f"/ui/child/ida/devices/{device_id}/updates",
+        data={},
+        follow_redirects=False,
+    )
+    assert empty.status_code == 302
+    cleared = client.get("/ui/child/ida")
+    assert "Keine Updates ausgewählt." in cleared.text
+
+    queued = client.post(
+        f"/ui/child/ida/devices/{device_id}/updates",
+        data={"package_name": ["Mozilla.Firefox", "VideoLAN.VLC", "not-listed"]},
+        follow_redirects=False,
+    )
+    assert queued.status_code == 302
+    done = client.get("/ui/child/ida")
+    assert "2 Updates in die Agenten-Warteschlange gelegt." in done.text
+
+    db = SessionLocal()
+    try:
+        from app.db import DeviceCommand, PendingUpdate
+
+        names = {row.package_name for row in db.query(PendingUpdate).filter_by(device_id=device_id).all()}
+        assert names == {"Mozilla.Firefox", "VideoLAN.VLC"}
+        commands = db.query(DeviceCommand).filter_by(device_id=device_id, kind="update_one").all()
+        assert {cmd.package_name for cmd in commands} == {"Mozilla.Firefox", "VideoLAN.VLC"}
+        assert all(cmd.status == "pending" and cmd.via == "agent" for cmd in commands)
+    finally:
+        db.close()
+
+    kept = client.post(
+        "/api/v1/agent/sync",
+        headers={"X-Device-Key": key},
+        json={"active": False, "os": "windows"},
+    )
+    assert kept.status_code == 200
+    db = SessionLocal()
+    try:
+        from app.db import PendingUpdate
+
+        assert db.query(PendingUpdate).filter_by(device_id=device_id).count() == 2
+    finally:
+        db.close()
+
+    client.post(
+        "/api/v1/agent/sync",
+        headers={"X-Device-Key": key},
+        json={"active": False, "os": "windows", "pending_updates": []},
+    )
+    db = SessionLocal()
+    try:
+        from app.db import PendingUpdate
+
+        assert db.query(PendingUpdate).filter_by(device_id=device_id).count() == 0
+    finally:
+        db.close()
+    quiet = client.get("/ui/child/ida")
+    assert "Keine ausstehenden Updates." in quiet.text

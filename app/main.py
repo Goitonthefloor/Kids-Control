@@ -40,6 +40,7 @@ from app.db import (
     ServerSetting,
     SessionLocal,
     SetupEvent,
+    PendingUpdate,
     SoftwareItem,
     SoftwareWatch,
     audit,
@@ -47,6 +48,9 @@ from app.db import (
     utcnow,
 )
 from app.ssh_control import PACKAGE_NAME_RE, remote_update_script, run_ssh, store_private_key
+
+_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+:~-]{0,79}$")
+_SOURCE_RE = re.compile(r"^[A-Za-z0-9._+-]{1,32}$")
 from app.policy import (
     REASON_LABELS_DE,
     SCHEDULE_PRESETS,
@@ -291,6 +295,43 @@ def _store_inventory(db, device: Device, inventory: list) -> None:
         row.version = version or "nicht installiert"
         row.source = source
         row.reported_at = utcnow()
+
+
+def _version_ok(value: str) -> bool:
+    return bool(_VERSION_RE.fullmatch(value)) and any(ch.isdigit() for ch in value)
+
+
+def _store_pending_updates(db, device: Device, updates: list) -> None:
+    clean: dict[str, tuple[str, str, str]] = {}
+    for item in updates[:200]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("package_name") or "").strip()
+        if not PACKAGE_NAME_RE.fullmatch(name):
+            continue
+        available = str(item.get("available") or item.get("available_version") or "").strip()
+        if not _version_ok(available):
+            continue
+        installed = str(item.get("version") or item.get("installed_version") or "").strip()
+        if installed and not _version_ok(installed):
+            installed = ""
+        source = str(item.get("source") or "unknown").strip() or "unknown"
+        if not _SOURCE_RE.fullmatch(source):
+            source = "unknown"
+        clean[name] = (installed, available, source)
+    db.query(PendingUpdate).filter_by(device_id=device.id).delete()
+    now = utcnow()
+    for name, (installed, available, source) in clean.items():
+        db.add(
+            PendingUpdate(
+                device_id=device.id,
+                package_name=name,
+                installed_version=installed,
+                available_version=available,
+                source=source,
+                reported_at=now,
+            )
+        )
 
 
 def default_schedules_for(child_id: int) -> list[Schedule]:
@@ -538,6 +579,12 @@ def child_page(request: Request, slug: str):
                 .limit(5)
                 .all()
             )
+            pending = (
+                db.query(PendingUpdate)
+                .filter_by(device_id=d.id)
+                .order_by(PendingUpdate.package_name.asc())
+                .all()
+            )
             devices.append(
                 {
                     "id": d.id,
@@ -570,6 +617,16 @@ def child_page(request: Request, slug: str):
                             "output": (c.output or "")[:240],
                         }
                         for c in cmds
+                    ],
+                    "pending": [
+                        {
+                            "package_name": row.package_name,
+                            "installed_version": row.installed_version,
+                            "available_version": row.available_version,
+                            "source": row.source,
+                            "reported_at": row.reported_at.isoformat() if row.reported_at else "",
+                        }
+                        for row in pending
                     ],
                 }
             )
@@ -1260,6 +1317,52 @@ def queue_update(
         db.close()
 
 
+@app.post("/ui/child/{slug}/devices/{device_id}/updates")
+async def queue_selected_updates(request: Request, slug: str, device_id: int):
+    denied = require_admin(request)
+    if denied:
+        return denied
+    form = await request.form()
+    requested: list[str] = []
+    for raw in form.getlist("package_name"):
+        name = str(raw).strip()
+        if name and name not in requested:
+            requested.append(name)
+    db = SessionLocal()
+    try:
+        child = get_child_by_slug(db, slug)
+        device = db.query(Device).filter_by(id=device_id, child_id=child.id).first() if child else None
+        if not device:
+            return HTMLResponse("Gerät nicht gefunden", status_code=404)
+        known = {row.package_name for row in db.query(PendingUpdate).filter_by(device_id=device.id).all()}
+        chosen = [name for name in requested if name in known and PACKAGE_NAME_RE.fullmatch(name)][:40]
+        if not chosen:
+            request.session["flash"] = say(request, "pending_none_selected")
+            return RedirectResponse(f"/ui/child/{slug}", status_code=302)
+        for name in chosen:
+            db.add(
+                DeviceCommand(
+                    device_id=device.id,
+                    kind="update_one",
+                    package_name=name,
+                    status="pending",
+                    via="agent",
+                )
+            )
+        audit(
+            db,
+            actor=config.ADMIN_USER,
+            action="REMOTE_UPDATE_QUEUE",
+            child_slug=slug,
+            details=",".join(chosen)[:500],
+        )
+        db.commit()
+        request.session["flash"] = say(request, "pending_queued", count=len(chosen))
+        return RedirectResponse(f"/ui/child/{slug}", status_code=302)
+    finally:
+        db.close()
+
+
 @app.post("/ui/grant/{slug}/hour")
 def grant_hour(request: Request, slug: str):
     denied = require_admin(request)
@@ -1653,6 +1756,8 @@ async def agent_sync(request: Request):
         inventory = body.get("inventory") or []
         if isinstance(inventory, list):
             _store_inventory(db, device, inventory)
+        if "pending_updates" in body and isinstance(body.get("pending_updates"), list):
+            _store_pending_updates(db, device, body["pending_updates"])
 
         # Count usage only while the agent reports an active interactive session.
         policy = build_agent_policy(db, child, tick_usage=bool(active))
