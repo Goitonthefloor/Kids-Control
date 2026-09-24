@@ -54,6 +54,7 @@ Der Key bindet das Gerät an genau ein Kind-Profil.
 
 - Eltern legen eine Beobachtungsliste (Paketnamen) je Kind an.
 - Der Agent meldet die installierte Version (apt/rpm/pacman, Homebrew, winget).
+- Der Agent meldet ausstehende Updates (winget, apt, dnf, pacman). Die Eltern-UI zeigt sie je Gerät mit Auswahl. „Ausgewählte aktualisieren“ legt nur die markierten Pakete in die Warteschlange. „Updates abwählen“ setzt die Markierung zurück.
 - Updates können in die Agenten-Warteschlange gelegt werden.
 - Linux-Geräte mit hinterlegtem SSH-Schlüssel können Updates sofort vom Server aus anstoßen (`BatchMode`, kein Passwort-Prompt).
 

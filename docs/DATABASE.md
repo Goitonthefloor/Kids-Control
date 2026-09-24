@@ -22,6 +22,7 @@ Initialisierung ausschließlich über SQLAlchemy (`init_db()`).
 | `day_overrides` | „Heute unbegrenzt“ |
 | `daily_usage` | Verbrauchte Minuten je lokalem Tag |
 | `audit_log` | Nachvollziehbare Eltern-Aktionen |
+| `pending_updates` | Vom Client gemeldete ausstehende Paket-Updates (installierte und verfügbare Version) |
 
 ## App-Regeln
 

@@ -105,6 +105,17 @@ CREATE TABLE software_items (
   CONSTRAINT uq_software_device_package UNIQUE (device_id, package_name)
 );
 
+CREATE TABLE pending_updates (
+  id INTEGER PRIMARY KEY,
+  device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  package_name VARCHAR NOT NULL,
+  installed_version VARCHAR NOT NULL,
+  available_version VARCHAR NOT NULL,
+  source VARCHAR NOT NULL,
+  reported_at DATETIME NOT NULL,
+  CONSTRAINT uq_pending_device_package UNIQUE (device_id, package_name)
+);
+
 CREATE TABLE device_commands (
   id INTEGER PRIMARY KEY,
   device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,

@@ -72,6 +72,7 @@ class Device(Base):
     child = relationship("Child", back_populates="devices")
     software = relationship("SoftwareItem", back_populates="device", cascade="all, delete-orphan")
     commands = relationship("DeviceCommand", back_populates="device", cascade="all, delete-orphan")
+    pending_updates = relationship("PendingUpdate", back_populates="device", cascade="all, delete-orphan")
 
 
 class ServerSetting(Base):
@@ -227,6 +228,26 @@ class SoftwareItem(Base):
 
     __table_args__ = (
         UniqueConstraint("device_id", "package_name", name="uq_software_device_package"),
+    )
+
+
+class PendingUpdate(Base):
+    """Package upgrade reported by a Windows or Linux client."""
+
+    __tablename__ = "pending_updates"
+
+    id = Column(Integer, primary_key=True)
+    device_id = Column(Integer, ForeignKey("devices.id", ondelete="CASCADE"), nullable=False)
+    package_name = Column(String, nullable=False)
+    installed_version = Column(String, nullable=False, default="")
+    available_version = Column(String, nullable=False, default="")
+    source = Column(String, nullable=False, default="unknown")
+    reported_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    device = relationship("Device", back_populates="pending_updates")
+
+    __table_args__ = (
+        UniqueConstraint("device_id", "package_name", name="uq_pending_device_package"),
     )
 
 

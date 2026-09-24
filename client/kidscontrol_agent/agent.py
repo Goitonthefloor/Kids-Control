@@ -20,9 +20,11 @@ from kidscontrol_agent.enforce import (
     user_session_active,
 )
 from kidscontrol_agent.inventory import (
+    cached_pending_updates,
     load_cached_quota,
     load_cached_watches,
     query_versions,
+    refresh_pending_updates,
     run_update,
     save_cached_quota,
     save_cached_watches,
@@ -34,15 +36,17 @@ from kidscontrol_agent.quota_warn import warn_running_quotas
 def sync(server: str, device_key: str, *, active: bool = True) -> dict:
     url = f"{server}/api/v1/agent/sync"
     watches = load_cached_watches()
-    payload = json.dumps(
-        {
-            "active": active,
-            "hostname": hostname(),
-            "os": detect_os(),
-            "inventory": query_versions(watches) if watches else [],
-            "running_apps": running_rule_ids(load_cached_quota()),
-        }
-    ).encode("utf-8")
+    body = {
+        "active": active,
+        "hostname": hostname(),
+        "os": detect_os(),
+        "inventory": query_versions(watches) if watches else [],
+        "running_apps": running_rule_ids(load_cached_quota()),
+    }
+    pending = cached_pending_updates()
+    if pending is not None:
+        body["pending_updates"] = pending
+    payload = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=payload,
@@ -142,6 +146,7 @@ def run_once(cfg: dict) -> int:
     warn_running_quotas(policy.get("quota_apps") or [], dry_run=cfg["dry_run"])
     enforce_policy(policy, dry_run=cfg["dry_run"])
     handle_commands(cfg, policy)
+    refresh_pending_updates()
     return 0
 
 
