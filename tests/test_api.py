@@ -792,6 +792,153 @@ def test_stale_running_command_returns_to_pending(client):
         db.close()
 
 
+def test_child_card_blocks_programs_and_stores_quotas(client):
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+
+    from app.db import AppRule, AppUsage, Child, Device
+
+    login(client)
+    client.post("/ui/children/add", data={"display_name": "Mira"}, follow_redirects=False)
+    client.post(
+        "/ui/child/mira/apps/add",
+        data={"label": "Roblox", "pattern": "RobloxPlayerBeta.exe", "scope": "always"},
+        follow_redirects=False,
+    )
+    missing = client.post(
+        "/ui/child/mira/apps/add",
+        data={"label": "Minecraft", "pattern": "minecraft", "scope": "quota"},
+        follow_redirects=False,
+    )
+    assert missing.status_code == 302
+    assert "Für ein Zeitkontingent" in client.get("/ui/child/mira").text
+
+    added = client.post(
+        "/ui/child/mira/apps/add",
+        data={"label": "Minecraft", "pattern": "minecraft", "match_mode": "contains", "scope": "quota", "daily_minutes": "1"},
+        follow_redirects=False,
+    )
+    assert added.status_code == 302
+    dash = client.get("/dashboard")
+    assert "Roblox" in dash.text and "immer sperren" in dash.text
+    assert "Minecraft" in dash.text and "Heute 0 von 1 Min" in dash.text
+    assert "Zeitkontingent" in dash.text
+
+    client.post("/ui/child/mira/devices/add", data={"name": "PC", "os_family": "linux"}, follow_redirects=False)
+    db = SessionLocal()
+    try:
+        child = db.query(Child).filter_by(slug="mira").one()
+        rule = db.query(AppRule).filter_by(child_id=child.id, pattern="minecraft").one()
+        key = db.query(Device).filter_by(child_id=child.id).one().device_key
+        rule_id = rule.id
+        day = datetime.now(ZoneInfo("Europe/Berlin")).date().isoformat()
+    finally:
+        db.close()
+
+    fresh = client.post(
+        "/api/v1/agent/sync",
+        headers={"X-Device-Key": key},
+        json={"active": False, "os": "linux", "running_apps": [rule_id]},
+    )
+    assert fresh.status_code == 200
+    fresh_quota = next(item for item in fresh.json()["quota_apps"] if item["id"] == rule_id)
+    assert fresh_quota["remaining_seconds"] == 60
+    assert all(item["pattern"] != "minecraft" for item in fresh.json()["blocked_apps"])
+    assert any(item["pattern"] == "RobloxPlayerBeta.exe" for item in fresh.json()["blocked_apps"])
+
+    db = SessionLocal()
+    try:
+        usage = db.query(AppUsage).filter_by(rule_id=rule_id, day=day).one()
+        assert usage.used_minutes == 0
+        usage.last_seen_at = datetime.now(timezone.utc) - timedelta(seconds=90)
+        db.commit()
+    finally:
+        db.close()
+
+    spent = client.post(
+        "/api/v1/agent/sync",
+        headers={"X-Device-Key": key},
+        json={"active": False, "os": "linux", "running_apps": [rule_id]},
+    )
+    body = spent.json()
+    assert any(item["pattern"] == "minecraft" for item in body["blocked_apps"])
+    assert all(item["id"] != rule_id for item in body["quota_apps"])
+    db = SessionLocal()
+    try:
+        usage = db.query(AppUsage).filter_by(rule_id=rule_id, day=day).one()
+        assert usage.used_minutes == 1
+    finally:
+        db.close()
+    assert "Kontingent aufgebraucht" in client.get("/dashboard").text
+
+
+def test_quota_ignores_idle_time_and_long_gaps(client):
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+
+    from app.db import AppRule, AppUsage, Child, Device
+
+    login(client)
+    client.post("/ui/children/add", data={"display_name": "Nils"}, follow_redirects=False)
+    client.post(
+        "/ui/child/nils/apps/add",
+        data={"label": "Firefox", "pattern": "firefox", "scope": "quota", "daily_minutes": "30"},
+        follow_redirects=False,
+    )
+    client.post("/ui/child/nils/devices/add", data={"name": "PC", "os_family": "linux"}, follow_redirects=False)
+    day = datetime.now(ZoneInfo("Europe/Berlin")).date().isoformat()
+    db = SessionLocal()
+    try:
+        child = db.query(Child).filter_by(slug="nils").one()
+        rule = db.query(AppRule).filter_by(child_id=child.id).one()
+        key = db.query(Device).filter_by(child_id=child.id).one().device_key
+        rule_id = rule.id
+        db.add(
+            AppUsage(
+                child_id=child.id,
+                rule_id=rule.id,
+                day=day,
+                used_minutes=0,
+                remainder_seconds=15,
+                last_seen_at=datetime.now(timezone.utc) - timedelta(seconds=400),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    idle = client.post(
+        "/api/v1/agent/sync",
+        headers={"X-Device-Key": key},
+        json={"active": False, "os": "linux", "running_apps": []},
+    )
+    assert idle.status_code == 200
+    assert any(item["id"] == rule_id for item in idle.json()["quota_apps"])
+    db = SessionLocal()
+    try:
+        usage = db.query(AppUsage).filter_by(rule_id=rule_id).one()
+        assert usage.used_minutes == 0
+        assert usage.remainder_seconds == 15
+        usage.last_seen_at = datetime.now(timezone.utc) - timedelta(seconds=400)
+        db.commit()
+    finally:
+        db.close()
+
+    gapped = client.post(
+        "/api/v1/agent/sync",
+        headers={"X-Device-Key": key},
+        json={"active": False, "os": "linux", "running_apps": [rule_id]},
+    )
+    assert any(item["id"] == rule_id for item in gapped.json()["quota_apps"])
+    db = SessionLocal()
+    try:
+        usage = db.query(AppUsage).filter_by(rule_id=rule_id).one()
+        assert usage.used_minutes == 0
+        assert usage.remainder_seconds == 15
+    finally:
+        db.close()
+
+
 def test_pending_updates_are_listed_and_selectable(client):
     login(client)
     client.post("/ui/children/add", data={"display_name": "Ida", "slug": "ida"}, follow_redirects=False)

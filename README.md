@@ -17,7 +17,7 @@ Die Web-Oberfläche gibt es auf Deutsch und Englisch (Schalter **DE / EN**).
 1. **Eltern-Hub (Server)** – Web-UI und API, einzige Quelle der Wahrheit
 2. **Agent auf jedem Kinder-PC** – holt Regeln ab und setzt sie lokal durch
 3. **Nutzungszeit** – Zeitfenster, Tagesminuten, +1h, „Heute unbegrenzt“
-4. **App-Sperren** – Prozesse nach Muster beenden; jede Sperre ist danach änderbar
+4. **Programme** – einzeln sperren oder ein Tageskontingent hinterlegen; der Agent beendet den Prozess
 5. **Softwarestände und Updates** – Versionen melden, ausstehende Updates auswählen, Updates über den Agenten oder per SSH
 
 Keine Inhaltsanalyse, kein Keylogging, keine Bildschirmüberwachung.
@@ -127,7 +127,7 @@ The web UI is available in German and English (switch **DE / EN**).
 1. **Parent hub (server)** – web UI and API, the only source of truth
 2. **Agent on each child PC** – pulls the rules and enforces them locally
 3. **Screen time** – weekly windows, daily minutes, +1h, “unlimited today”
-4. **App blocks** – stop processes by pattern; each block can be edited later
+4. **Programs** – block one program or give it a daily quota; the agent stops the process
 5. **Software versions and updates** – report versions, choose pending updates, update via the agent or over SSH
 
 No content inspection, no keylogging, no screen surveillance.

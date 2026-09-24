@@ -16,16 +16,21 @@ from kidscontrol_agent.enforce import (
     kill_pid,
     lock_session,
     notify,
+    running_rule_ids,
     user_session_active,
 )
 from kidscontrol_agent.inventory import (
     cached_pending_updates,
+    load_cached_quota,
     load_cached_watches,
     query_versions,
     refresh_pending_updates,
     run_update,
+    save_cached_quota,
     save_cached_watches,
 )
+from kidscontrol_agent.notify_style import set_active_env
+from kidscontrol_agent.quota_warn import warn_running_quotas
 
 
 def sync(server: str, device_key: str, *, active: bool = True) -> dict:
@@ -36,6 +41,7 @@ def sync(server: str, device_key: str, *, active: bool = True) -> dict:
         "hostname": hostname(),
         "os": detect_os(),
         "inventory": query_versions(watches) if watches else [],
+        "running_apps": running_rule_ids(load_cached_quota()),
     }
     pending = cached_pending_updates()
     if pending is not None:
@@ -136,6 +142,8 @@ def run_once(cfg: dict) -> int:
         f"remaining={policy.get('remaining_minutes')} "
         f"blocked_apps={len(policy.get('blocked_apps') or [])}"
     )
+    save_cached_quota(policy.get("quota_apps") or [])
+    warn_running_quotas(policy.get("quota_apps") or [], dry_run=cfg["dry_run"])
     enforce_policy(policy, dry_run=cfg["dry_run"])
     handle_commands(cfg, policy)
     refresh_pending_updates()
@@ -165,6 +173,11 @@ def main(argv: list[str] | None = None) -> int:
             env_path = argv[i + 1]
         if arg == "--once":
             once = True
+    set_active_env(env_path)
+    if "--settings" in argv:
+        from kidscontrol_agent.settings import open_settings
+
+        return open_settings()
     cfg = load_config(env_path)
     if once:
         return run_once(cfg)

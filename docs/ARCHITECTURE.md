@@ -48,6 +48,8 @@ Der Key bindet das Gerät an genau ein Kind-Profil.
 
 **App-Sperren** gelten zusätzlich (Scope `always`) auch während erlaubter Nutzungszeit.
 
+**Programm-Kontingente** (Scope `quota`) erlauben ein Programm für eine Anzahl Minuten pro lokalem Tag. Der Agent meldet, ob der Prozess läuft. Läuft er noch und die Restzeit erreicht 5, 2 oder 1 Minute, erscheint auf dem Kinder-PC je Stufe eine Warnung. Ist das Kontingent aufgebraucht, wird der Prozess beendet, die restliche Sitzung bleibt davon unberührt.
+
 ## Softwarestände und Updates
 
 - Eltern legen eine Beobachtungsliste (Paketnamen) je Kind an.

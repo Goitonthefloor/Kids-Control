@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
-from app.db import AppRule, Child, DailyUsage, DayOverride, Override, Schedule
+from app.db import AppRule, AppUsage, Child, DailyUsage, DayOverride, Override, Schedule
 
 REASON_LABELS_DE = {
     "override": "Sonderfreigabe",
@@ -205,6 +205,127 @@ def compute_session(db: Session, child: Child, *, tick_usage: bool = False) -> d
     }
 
 
+def _local_day(child: Child) -> str:
+    return now_local(child_tz(child)).date().isoformat()
+
+
+def usage_clock(db: Session, rule_id: int, day: str) -> tuple[int, int]:
+    row = db.query(AppUsage).filter_by(rule_id=rule_id, day=day).first()
+    if not row:
+        return 0, 0
+    return int(row.used_minutes or 0), int(row.remainder_seconds or 0)
+
+
+def used_minutes_for(db: Session, rule_id: int, day: str) -> int:
+    return usage_clock(db, rule_id, day)[0]
+
+
+def quota_exhausted(db: Session, child: Child, rule: AppRule) -> bool:
+    limit = int(rule.daily_minutes or 0)
+    if limit <= 0:
+        return True
+    return used_minutes_for(db, rule.id, _local_day(child)) >= limit
+
+
+def program_rows(db: Session, child: Child) -> list[dict]:
+    day = _local_day(child)
+    rows: list[dict] = []
+    for rule in child.app_rules:
+        used = used_minutes_for(db, rule.id, day) if rule.scope == "quota" else 0
+        limit = int(rule.daily_minutes or 0)
+        rows.append(
+            {
+                "id": rule.id,
+                "label": rule.label,
+                "pattern": rule.pattern,
+                "match_mode": rule.match_mode,
+                "scope": rule.scope,
+                "enabled": rule.enabled,
+                "daily_minutes": rule.daily_minutes,
+                "used_minutes": used,
+                "exhausted": bool(rule.enabled and rule.scope == "quota" and (limit <= 0 or used >= limit)),
+            }
+        )
+    return rows
+
+
+def tick_running_apps(db: Session, child: Child, running_ids: list) -> None:
+    """Add elapsed time for quota programs the agent currently sees running."""
+    wanted: set[int] = set()
+    if isinstance(running_ids, list):
+        for item in running_ids[:50]:
+            try:
+                wanted.add(int(item))
+            except (TypeError, ValueError):
+                continue
+    tz = child_tz(child)
+    today = now_local(tz).date()
+    day = today.isoformat()
+    now_utc = datetime.now(timezone.utc)
+    cutoff = (today - timedelta(days=14)).isoformat()
+    db.query(AppUsage).filter(AppUsage.child_id == child.id, AppUsage.day < cutoff).delete(synchronize_session=False)
+    rules = (
+        db.query(AppRule)
+        .filter(AppRule.child_id == child.id, AppRule.enabled.is_(True), AppRule.scope == "quota")
+        .all()
+    )
+    for rule in rules:
+        usage = db.query(AppUsage).filter_by(rule_id=rule.id, day=day).first()
+        if usage is None:
+            db.add(
+                AppUsage(
+                    child_id=child.id,
+                    rule_id=rule.id,
+                    day=day,
+                    used_minutes=0,
+                    remainder_seconds=0,
+                    last_seen_at=now_utc,
+                )
+            )
+            db.flush()
+            continue
+        if rule.id in wanted:
+            last = as_aware_utc(usage.last_seen_at) or now_utc
+            used, remainder = apply_usage_tick(
+                int(usage.used_minutes or 0),
+                int(usage.remainder_seconds or 0),
+                (now_utc - last).total_seconds(),
+            )
+            usage.used_minutes = used
+            usage.remainder_seconds = remainder
+        usage.last_seen_at = now_utc
+    db.flush()
+
+
+def active_quota_apps(db: Session, child: Child) -> list[dict]:
+    day = _local_day(child)
+    out: list[dict] = []
+    rules = (
+        db.query(AppRule)
+        .filter(AppRule.child_id == child.id, AppRule.enabled.is_(True), AppRule.scope == "quota")
+        .order_by(AppRule.id.asc())
+        .all()
+    )
+    for rule in rules:
+        limit = int(rule.daily_minutes or 0)
+        used, remainder = usage_clock(db, rule.id, day)
+        if limit <= 0 or used >= limit:
+            continue
+        remaining_seconds = max(0, limit * 60 - (used * 60 + max(0, remainder)))
+        out.append(
+            {
+                "id": rule.id,
+                "label": rule.label or rule.pattern,
+                "pattern": rule.pattern,
+                "match_mode": rule.match_mode,
+                "daily_minutes": limit,
+                "used_minutes": used,
+                "remaining_seconds": remaining_seconds,
+            }
+        )
+    return out
+
+
 def list_blocked_apps(db: Session, child: Child, *, session_allowed: bool) -> list[dict]:
     rules = (
         db.query(AppRule)
@@ -215,6 +336,8 @@ def list_blocked_apps(db: Session, child: Child, *, session_allowed: bool) -> li
     out: list[dict] = []
     for rule in rules:
         if rule.scope == "when_denied" and session_allowed:
+            continue
+        if rule.scope == "quota" and not quota_exhausted(db, child, rule):
             continue
         out.append(
             {
@@ -247,6 +370,7 @@ def build_agent_policy(db: Session, child: Child, *, tick_usage: bool) -> dict:
         "minutes_left_window": session.get("minutes_left_window"),
         "window_end_hm": session.get("window_end_hm"),
         "blocked_apps": blocked,
+        "quota_apps": active_quota_apps(db, child),
         "actions": {
             "lock_session_when_denied": True,
             "kill_blocked_apps": True,
