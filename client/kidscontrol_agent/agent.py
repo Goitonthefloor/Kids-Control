@@ -27,6 +27,7 @@ from kidscontrol_agent.inventory import (
     save_cached_quota,
     save_cached_watches,
 )
+from kidscontrol_agent.quota_warn import warn_running_quotas
 
 
 def sync(server: str, device_key: str, *, active: bool = True) -> dict:
@@ -137,6 +138,7 @@ def run_once(cfg: dict) -> int:
         f"blocked_apps={len(policy.get('blocked_apps') or [])}"
     )
     save_cached_quota(policy.get("quota_apps") or [])
+    warn_running_quotas(policy.get("quota_apps") or [], dry_run=cfg["dry_run"])
     enforce_policy(policy, dry_run=cfg["dry_run"])
     handle_commands(cfg, policy)
     return 0

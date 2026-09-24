@@ -209,9 +209,15 @@ def _local_day(child: Child) -> str:
     return now_local(child_tz(child)).date().isoformat()
 
 
-def used_minutes_for(db: Session, rule_id: int, day: str) -> int:
+def usage_clock(db: Session, rule_id: int, day: str) -> tuple[int, int]:
     row = db.query(AppUsage).filter_by(rule_id=rule_id, day=day).first()
-    return int(row.used_minutes or 0) if row else 0
+    if not row:
+        return 0, 0
+    return int(row.used_minutes or 0), int(row.remainder_seconds or 0)
+
+
+def used_minutes_for(db: Session, rule_id: int, day: str) -> int:
+    return usage_clock(db, rule_id, day)[0]
 
 
 def quota_exhausted(db: Session, child: Child, rule: AppRule) -> bool:
@@ -302,9 +308,10 @@ def active_quota_apps(db: Session, child: Child) -> list[dict]:
     )
     for rule in rules:
         limit = int(rule.daily_minutes or 0)
-        used = used_minutes_for(db, rule.id, day)
+        used, remainder = usage_clock(db, rule.id, day)
         if limit <= 0 or used >= limit:
             continue
+        remaining_seconds = max(0, limit * 60 - (used * 60 + max(0, remainder)))
         out.append(
             {
                 "id": rule.id,
@@ -313,6 +320,7 @@ def active_quota_apps(db: Session, child: Child) -> list[dict]:
                 "match_mode": rule.match_mode,
                 "daily_minutes": limit,
                 "used_minutes": used,
+                "remaining_seconds": remaining_seconds,
             }
         )
     return out

@@ -841,7 +841,8 @@ def test_child_card_blocks_programs_and_stores_quotas(client):
         json={"active": False, "os": "linux", "running_apps": [rule_id]},
     )
     assert fresh.status_code == 200
-    assert any(item["id"] == rule_id for item in fresh.json()["quota_apps"])
+    fresh_quota = next(item for item in fresh.json()["quota_apps"] if item["id"] == rule_id)
+    assert fresh_quota["remaining_seconds"] == 60
     assert all(item["pattern"] != "minecraft" for item in fresh.json()["blocked_apps"])
     assert any(item["pattern"] == "RobloxPlayerBeta.exe" for item in fresh.json()["blocked_apps"])
 

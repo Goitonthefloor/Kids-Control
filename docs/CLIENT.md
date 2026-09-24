@@ -103,7 +103,8 @@ KIDSCONTROL_DRY_RUN=1 python -m kidscontrol_agent --once --env /pfad/zu/client.e
 2. Wenn Sitzung verboten → Bildschirm/Sitzung sperren (best effort)  
 3. Laufende Prozesse gegen App-Regeln matchen und beenden  
 4. Programme mit Tageskontingent melden, solange das Kontingent reicht, und danach beenden  
-5. Vorwarnung anzeigen, wenn das Zeitfenster endet  
+5. Warnen, solange so ein Programm läuft und noch 5, 2 oder 1 Minute übrig sind. Jede Stufe einmal.  
+6. Vorwarnung anzeigen, wenn das Zeitfenster endet  
 
 ## OS-Hinweise
 
