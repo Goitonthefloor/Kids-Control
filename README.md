@@ -52,7 +52,26 @@ Nicht nötig: Active Directory, Docker, dieselbe Distribution auf allen Rechnern
 
 Version **1.6.0**.
 
-### 1. Server mit einem Klick
+### 1. Repo auf den Server holen
+
+```bash
+curl -fsSL -o kidscontrol.tar.gz https://github.com/Goitonthefloor/Kids-Control/archive/refs/heads/main.tar.gz
+tar -xzf kidscontrol.tar.gz
+cd Kids-Control-main
+```
+
+`curl` lädt den aktuellen Stand von `main`. `tar` entpackt den Ordner `Kids-Control-main`. Die weiteren Befehle gelten in diesem Ordner.
+
+Mit Git derselbe Stand:
+
+```bash
+git clone https://github.com/Goitonthefloor/Kids-Control.git
+cd Kids-Control
+```
+
+Unter Windows dieselben `curl`- und `tar`-Befehle in der Eingabeaufforderung, danach `setup-server.cmd`.
+
+### 2. Server mit einem Klick
 
 Linux und macOS: `./setup-server.sh` (macOS auch per Doppelklick auf `setup-server.command`). Windows: `setup-server.cmd` doppelklicken.
 
@@ -80,7 +99,7 @@ Drei Geheimnisse, die nicht dasselbe sind:
 
 Nach der Einrichtung nutzt der Agent nur noch den Geräte-Schlüssel in `client.env`. Weder Eltern-Passwort noch Client-Setup-Passwort noch der Kind-Code laufen im Alltag mit.
 
-### 2. Kind und Client über eine Adresse
+### 3. Kind und Client über eine Adresse
 
 1. Anmelden und nur den Namen des Kindes eintragen.
 2. Auf der Kind-Seite die Adresse kopieren, zum Beispiel `http://192.168.1.10:8000/install/…`.
@@ -162,7 +181,26 @@ Not required: Active Directory, Docker, or the same distribution on every machin
 
 Version **1.6.0**.
 
-### 1. One-click server
+### 1. Get the repo onto the server
+
+```bash
+curl -fsSL -o kidscontrol.tar.gz https://github.com/Goitonthefloor/Kids-Control/archive/refs/heads/main.tar.gz
+tar -xzf kidscontrol.tar.gz
+cd Kids-Control-main
+```
+
+`curl` downloads the current `main` branch. `tar` unpacks the folder `Kids-Control-main`. The following commands run inside that folder.
+
+With Git, the same tree:
+
+```bash
+git clone https://github.com/Goitonthefloor/Kids-Control.git
+cd Kids-Control
+```
+
+On Windows, use the same `curl` and `tar` commands in Command Prompt, then run `setup-server.cmd`.
+
+### 2. One-click server
 
 Linux and macOS: `./setup-server.sh` (on macOS, double-click `setup-server.command` as well). Windows: double-click `setup-server.cmd`.
 
@@ -190,7 +228,7 @@ Three secrets that are not the same thing:
 
 After enrollment the agent only uses the device key in `client.env`. Neither the parent password, nor the client setup password, nor the child code is used in daily operation.
 
-### 2. Child and client from one address
+### 3. Child and client from one address
 
 1. Sign in and enter only the child's name.
 2. On the child page, copy the address, for example `http://192.168.1.10:8000/install/…`.

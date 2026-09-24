@@ -9,6 +9,16 @@ Siehe README, Abschnitt Systemvoraussetzungen.
 - Python 3.10+
 - Port 8000 (oder ein anderer freier TCP-Port) im Heimnetz erreichbar
 
+## Repo holen
+
+```bash
+curl -fsSL -o kidscontrol.tar.gz https://github.com/Goitonthefloor/Kids-Control/archive/refs/heads/main.tar.gz
+tar -xzf kidscontrol.tar.gz
+cd Kids-Control-main
+```
+
+Mit Git: `git clone https://github.com/Goitonthefloor/Kids-Control.git` und `cd Kids-Control`.
+
 ## One-Click
 
 Linux und macOS: `./setup-server.sh`. macOS zusätzlich: `setup-server.command` doppelklicken. Windows: `setup-server.cmd` doppelklicken.
