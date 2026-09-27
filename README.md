@@ -1,7 +1,5 @@
 # KidsControl
 
-Deutsch unten. English follows.
-
 ---
 
 # Deutsch
