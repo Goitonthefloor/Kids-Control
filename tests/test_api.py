@@ -1044,3 +1044,177 @@ def test_pending_updates_are_listed_and_selectable(client):
         db.close()
     quiet = client.get("/ui/child/ida")
     assert "Keine ausstehenden Updates." in quiet.text
+
+
+def test_failed_setup_stops_polling_and_shows_the_error(client):
+    import re
+
+    from app.guards import clear_failures
+
+    login(client)
+    client.post("/ui/children/add", data={"display_name": "Mara"}, follow_redirects=False)
+    page = client.get("/dashboard")
+    token = re.search(r"/install/([A-Za-z0-9_-]{16,64})", page.text).group(1)
+    headers = {
+        "Accept": "text/html",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0",
+    }
+    assigned = client.post(
+        f"/install/{token}",
+        data={"child_slug": "mara", "device_name": "Lern-PC"},
+        headers=headers,
+        follow_redirects=False,
+    )
+    assert assigned.status_code == 303
+    ticket = assigned.headers["location"].rsplit("/", 1)[-1]
+    failed = client.post(
+        "/api/v1/setup/progress",
+        json={"ticket": ticket, "code": "failed", "detail": "Python fehlt"},
+    )
+    assert failed.status_code == 200
+    status = client.get(f"/install/{token}/status/{ticket}", headers={"Accept": "application/json"})
+    body = status.json()
+    assert body["done"] is True
+    assert body["ok"] is False
+    assert "fehlgeschlagen" in body["failure"].lower()
+    assert any("Python fehlt" in line for line in body["messages"])
+    progress = client.get(assigned.headers["location"], headers=headers)
+    assert 'id="kc-done" class="flash err"' in progress.text
+    assert "Die Einrichtung ist fehlgeschlagen" in progress.text
+    assert 'data.ok ? "flash" : "flash err"' in progress.text
+    clear_failures("install:testclient")
+
+
+def test_household_install_token_expires_but_enrolls_more_than_one_pc(client):
+    import re
+
+    from app.db import ServerSetting
+    from app.guards import clear_failures
+
+    login(client)
+    client.post("/ui/children/add", data={"display_name": "Pia", "slug": "pia"}, follow_redirects=False)
+    client.post("/ui/children/add", data={"display_name": "Ole", "slug": "ole"}, follow_redirects=False)
+    dashboard = client.get("/dashboard")
+    assert "4 Stunden" in dashboard.text
+    token = re.search(r"/install/([A-Za-z0-9_-]{16,64})", dashboard.text).group(1)
+    headers = {
+        "Accept": "text/html",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0",
+    }
+    stored = ""
+    db = SessionLocal()
+    try:
+        expires = db.query(ServerSetting).filter_by(key="install_token_expires").one()
+        assert int(expires.value) > 1_000_000_000
+        stored = expires.value
+        expires.value = ""
+        db.commit()
+    finally:
+        db.close()
+    try:
+        missing_expiry = client.get(f"/install/{token}", headers=headers)
+        assert missing_expiry.status_code == 404
+        refreshed = client.get("/dashboard")
+        new_token = re.search(r"/install/([A-Za-z0-9_-]{16,64})", refreshed.text).group(1)
+        assert new_token != token
+        for slug, name in (("pia", "Erster-PC"), ("ole", "Zweiter-PC")):
+            assigned = client.post(
+                f"/install/{new_token}",
+                data={"child_slug": slug, "device_name": name},
+                headers=headers,
+                follow_redirects=False,
+            )
+            assert assigned.status_code == 303
+        db = SessionLocal()
+        try:
+            row = db.query(ServerSetting).filter_by(key="install_token").one()
+            assert row.value == new_token
+            row_exp = db.query(ServerSetting).filter_by(key="install_token_expires").one()
+            row_exp.value = "1"
+            db.commit()
+        finally:
+            db.close()
+        expired = client.get(f"/install/{new_token}", headers=headers)
+        assert expired.status_code == 404
+        # A rejected link must not rotate the token by itself.
+        db = SessionLocal()
+        try:
+            assert db.query(ServerSetting).filter_by(key="install_token").one().value == new_token
+        finally:
+            db.close()
+    finally:
+        clear_failures("install:testclient")
+        db = SessionLocal()
+        try:
+            row = db.query(ServerSetting).filter_by(key="install_token_expires").one_or_none()
+            if row and row.value in {"", "1"}:
+                row.value = stored
+                db.commit()
+        finally:
+            db.close()
+
+
+def test_login_accepts_argon2_and_setup_stores_hashes(client, tmp_path, monkeypatch):
+    from app.config import migrate_plaintext_passwords, parse_env_file
+    from app.passwords import hash_password, passwords_match
+    from app.setup import apply_setup
+
+    monkeypatch.setenv("KIDSCONTROL_ADMIN_PASSWORD", hash_password("secret"))
+    ok = client.post("/login", data={"username": "admin", "password": "secret"}, follow_redirects=False)
+    assert ok.status_code == 302
+    bad = client.post("/login", data={"username": "admin", "password": "nope"}, follow_redirects=False)
+    assert bad.status_code == 401
+
+    monkeypatch.setenv("KIDSCONTROL_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("KIDSCONTROL_ADMIN_USER", "admin")
+    monkeypatch.setenv("KIDSCONTROL_ADMIN_PASSWORD", "secret")
+    monkeypatch.setenv("KIDSCONTROL_SETUP_PASSWORD", "setup-secret")
+    monkeypatch.setenv("KIDSCONTROL_SECRET", "test-secret")
+    monkeypatch.setenv("KIDSCONTROL_TZ", "Europe/Berlin")
+    monkeypatch.setenv("HOST", "0.0.0.0")
+    monkeypatch.setenv("PORT", "8000")
+    path = apply_setup(
+        admin_user="eltern",
+        admin_password="eltern-passwort",
+        setup_password="client-setup-pass",
+        force=True,
+    )
+    text = path.read_text(encoding="utf-8")
+    assert "eltern-passwort" not in text
+    assert "client-setup-pass" not in text
+    stored = parse_env_file(path)
+    assert stored["KIDSCONTROL_ADMIN_PASSWORD"].startswith("$argon2")
+    assert passwords_match("eltern-passwort", stored["KIDSCONTROL_ADMIN_PASSWORD"])
+    assert passwords_match("client-setup-pass", os.environ["KIDSCONTROL_SETUP_PASSWORD"])
+
+    legacy = tmp_path / "server.env"
+    legacy.write_text(
+        '# keep\nKIDSCONTROL_ADMIN_PASSWORD="plain-admin-pw"\n'
+        'KIDSCONTROL_SECRET="test-secret"\n'
+        'KIDSCONTROL_SETUP_PASSWORD="plain-setup-pw"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KIDSCONTROL_ADMIN_PASSWORD", "plain-admin-pw")
+    monkeypatch.setenv("KIDSCONTROL_SETUP_PASSWORD", "plain-setup-pw")
+    migrate_plaintext_passwords()
+    migrated = legacy.read_text(encoding="utf-8")
+    assert "# keep" in migrated
+    assert "plain-admin-pw" not in migrated
+    assert "plain-setup-pw" not in migrated
+    assert 'KIDSCONTROL_SECRET="test-secret"' in migrated
+    assert passwords_match("plain-admin-pw", os.environ["KIDSCONTROL_ADMIN_PASSWORD"])
+    migrate_plaintext_passwords()
+    assert "plain-admin-pw" not in legacy.read_text(encoding="utf-8")
+
+    monkeypatch.setenv("KIDSCONTROL_ADMIN_PASSWORD", "from-the-environment")
+    monkeypatch.setenv("KIDSCONTROL_SETUP_PASSWORD", "also-from-env")
+    legacy.write_text(
+        'KIDSCONTROL_ADMIN_PASSWORD="file-admin-pw"\nKIDSCONTROL_SETUP_PASSWORD="file-setup-pw"\n',
+        encoding="utf-8",
+    )
+    migrate_plaintext_passwords()
+    assert os.environ["KIDSCONTROL_ADMIN_PASSWORD"] == "from-the-environment"
+    sealed = parse_env_file(legacy)
+    assert "file-admin-pw" not in legacy.read_text(encoding="utf-8")
+    assert passwords_match("file-admin-pw", sealed["KIDSCONTROL_ADMIN_PASSWORD"])
+    assert passwords_match("file-setup-pw", sealed["KIDSCONTROL_SETUP_PASSWORD"])

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from html import escape
 
+from app.config import INSTALL_TOKEN_TTL_SECONDS
 from app.i18n import preset_label, reason_label, t, weekday
 
 
@@ -304,7 +305,7 @@ def render_dashboard(now_iso: str, kids: list[dict], flash: str | None = None, l
         install_card = f"""
 <div class="card">
   <h2 style="margin:0 0 8px 0;font-size:16px">{escape(t(lang, "dashboard_install_title"))}</h2>
-  <p class="small">{escape(t(lang, "dashboard_install_hint"))}</p>
+  <p class="small">{escape(t(lang, "dashboard_install_hint", hours=INSTALL_TOKEN_TTL_SECONDS // 3600))}</p>
   <pre style="white-space:pre-wrap;background:#0d1012;border:1px solid var(--border);border-radius:12px;padding:12px"><code>{escape(install_url)}</code></pre>
 </div>"""
     body = f'{install_card}<div class="grid">{rows}{add_form}</div><p class="small" style="margin-top:12px">{escape(t(lang, "decision_order"))}</p>'
@@ -347,7 +348,7 @@ def render_child_page(
   </form>
   <div class="small" style="margin-top:8px">{escape(t(lang, "install_url_label"))}</div>
   <pre style="white-space:pre-wrap;background:#0d1012;border:1px solid var(--border);border-radius:12px;padding:12px"><code>{escape(install_url)}</code></pre>
-  <p class="small" style="margin-top:10px">{escape(t(lang, "install_url_hint"))}</p>
+  <p class="small" style="margin-top:10px">{escape(t(lang, "install_url_hint", hours=INSTALL_TOKEN_TTL_SECONDS // 3600))}</p>
   <div class="small" style="margin-top:8px">{escape(t(lang, "client_setup_cmd_label"))}</div>
   <pre style="white-space:pre-wrap;background:#0d1012;border:1px solid var(--border);border-radius:12px;padding:12px"><code>{escape(setup_command)}</code></pre>
   <p class="small" style="margin-top:10px">{escape(t(lang, "oneclick_hint"))}</p>

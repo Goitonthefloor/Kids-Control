@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from html import escape
 
+from app.config import INSTALL_TOKEN_TTL_SECONDS
 from app.i18n import t
 from app.ui import css
 
@@ -133,7 +134,7 @@ def render_install_form(
       {name_field}
       {button}
     </form>
-    <p class="small" style="margin-top:16px">{escape(t(lang, "install_once"))}</p>
+    <p class="small" style="margin-top:16px">{escape(t(lang, "install_once", hours=INSTALL_TOKEN_TTL_SECONDS // 3600))}</p>
   </div>
 </div>"""
     return _install_shell(t(lang, "install_pick_title"), body, nav=nav, lang=lang)
@@ -159,12 +160,14 @@ def render_install_progress(
         f'<a href="/install/{safe_token}/go/{safe_ticket}?lang=en">EN</a>'
     )
     items = "".join(f"<li>{escape(line)}</li>" for line in messages)
-    done_class = "" if done else " hidden"
     if done and ok:
+        done_class = ""
         banner = t(lang, "install_success", device=device_name, child=child_name)
     elif done:
+        done_class = " err"
         banner = t(lang, "install_failure")
     else:
+        done_class = " hidden"
         banner = ""
     if platform in PLATFORMS:
         filename = INSTALLER_NAMES[platform]
@@ -215,7 +218,7 @@ def render_install_progress(
       log.appendChild(item);
     }});
     if (data.done) {{
-      box.className = "flash";
+      box.className = data.ok ? "flash" : "flash err";
       box.textContent = data.ok ? data.success : data.failure;
     }}
   }}

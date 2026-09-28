@@ -210,129 +210,207 @@ def notify(title: str, message: str, *, dry_run: bool = False, style: str | None
 
 
 def _notify_env(title: str, message: str) -> dict[str, str]:
-    env = os.environ.copy()
-    env["KC_TITLE"] = title
-    env["KC_MESSAGE"] = message
-    return env
+    return {"KC_TITLE": title, "KC_MESSAGE": message}
 
 
-def _notify_toast(os_name: str, title: str, message: str) -> None:
-    if os_name == "linux":
-        subprocess.run(["notify-send", "--", title, message], check=False, capture_output=True)
-        return
-    if os_name == "macos":
-        subprocess.run(
+def _is_root() -> bool:
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is None:
+        return False
+    try:
+        return geteuid() == 0
+    except OSError:
+        return False
+
+
+_SESSION_USER_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
+
+
+def _loginctl_props(session: str) -> dict[str, str] | None:
+    if not _SESSION_ID_RE.fullmatch(session):
+        return None
+    try:
+        out = subprocess.check_output(
             [
-                "osascript",
-                "-e",
-                "on run argv",
-                "-e",
-                "display notification (item 1 of argv) with title (item 2 of argv)",
-                "-e",
-                "end run",
-                "--",
-                message,
-                title,
+                "loginctl",
+                "show-session",
+                session,
+                "-p",
+                "Name",
+                "-p",
+                "User",
+                "-p",
+                "Active",
+                "-p",
+                "Display",
+                "-p",
+                "Type",
+                "-p",
+                "Remote",
+                "-p",
+                "State",
             ],
-            check=False,
-            capture_output=True,
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
         )
-        return
-    if os_name == "windows":
-        ps = (
-            "Add-Type -AssemblyName System.Windows.Forms; "
-            "Add-Type -AssemblyName System.Drawing; "
-            "$n = New-Object System.Windows.Forms.NotifyIcon; "
-            "$n.Icon = [System.Drawing.SystemIcons]::Information; "
-            "$n.Visible = $true; "
-            "$n.ShowBalloonTip(8000, $env:KC_TITLE, $env:KC_MESSAGE, "
-            "[System.Windows.Forms.ToolTipIcon]::Info); "
-            "Start-Sleep -Seconds 6; $n.Dispose()"
-        )
-        subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps],
-            check=False,
-            capture_output=True,
-            env=_notify_env(title, message),
-        )
+    except Exception:
+        return None
+    data: dict[str, str] = {}
+    for line in out.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        data[key] = value.strip()
+    return data
 
 
-def _notify_window(os_name: str, title: str, message: str) -> None:
-    if os_name == "linux" and shutil.which("zenity"):
-        subprocess.run(
-            ["zenity", "--warning", "--title", title, "--text", message],
-            check=False,
-            capture_output=True,
+def _linux_desktop_session() -> dict[str, str] | None:
+    """Active local graphical login, when the agent is root and can see loginctl."""
+    if not _is_root() or not shutil.which("loginctl"):
+        return None
+    try:
+        listing = subprocess.check_output(
+            ["loginctl", "list-sessions", "--no-legend"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
         )
-        return
-    if os_name == "macos":
-        subprocess.run(
-            [
-                "osascript",
-                "-e",
-                "on run argv",
-                "-e",
-                "display dialog (item 1 of argv) with title (item 2 of argv) buttons {\"OK\"} default button 1",
-                "-e",
-                "end run",
-                "--",
-                message,
-                title,
-            ],
-            check=False,
-            capture_output=True,
-        )
-        return
-    if os_name == "windows":
-        ps = (
-            "Add-Type -AssemblyName System.Windows.Forms; "
-            "[System.Windows.Forms.MessageBox]::Show($env:KC_MESSAGE, $env:KC_TITLE)"
-        )
-        subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps],
-            check=False,
-            capture_output=True,
-            env=_notify_env(title, message),
-        )
-        return
-    _tk_message(title, message)
+    except Exception:
+        return None
+    for line in listing.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        info = _loginctl_props(parts[0])
+        if not info:
+            continue
+        if info.get("Active") != "yes" or info.get("Remote") == "yes":
+            continue
+        if info.get("Type") not in {"x11", "wayland", "mir"}:
+            continue
+        user = info.get("Name") or ""
+        uid = info.get("User") or ""
+        if not uid.isdigit() or not _SESSION_USER_RE.fullmatch(user):
+            continue
+        return info
+    return None
 
 
-def _tk_message(title: str, message: str) -> None:
-    import tkinter as tk
-    from tkinter import messagebox
-
-    root = tk.Tk()
-    root.withdraw()
-    messagebox.showwarning(title, message)
-    root.destroy()
+def _env_assignment(key: str, value: str) -> str:
+    clean = str(value).replace("\n", " ").replace("\r", " ").replace("\0", "")
+    return f"{key}={clean}"
 
 
-def _lock_windows() -> None:
-    """Lock the interactive desktop. From a SYSTEM service, start the lock in that session."""
-    subprocess.run(["rundll32.exe", "user32.dll,LockWorkStation"], check=False, capture_output=True)
+def _linux_user_argv(argv: list[str], extra_env: dict[str, str] | None = None) -> list[str]:
+    """Run a notifier in the logged-in user's session bus. Otherwise leave argv as-is."""
+    info = _linux_desktop_session()
+    if not info:
+        return argv
+    uid = info["User"]
+    user = info["Name"]
+    pairs = [
+        _env_assignment("XDG_RUNTIME_DIR", f"/run/user/{uid}"),
+        _env_assignment("DBUS_SESSION_BUS_ADDRESS", f"unix:path=/run/user/{uid}/bus"),
+    ]
+    display = info.get("Display") or ""
+    if display:
+        pairs.append(_env_assignment("DISPLAY", display))
+    if info.get("Type") == "wayland":
+        pairs.append(_env_assignment("WAYLAND_DISPLAY", "wayland-0"))
+    for key, value in (extra_env or {}).items():
+        pairs.append(_env_assignment(key, value))
+    if shutil.which("runuser"):
+        return ["runuser", "-u", user, "--", "env", *pairs, *argv]
+    if shutil.which("sudo"):
+        return ["sudo", "-n", "-u", user, "--", "env", *pairs, *argv]
+    return argv
+
+
+def _macos_console_uid() -> int | None:
+    try:
+        uid = os.stat("/dev/console").st_uid
+    except OSError:
+        return None
+    if uid <= 0:
+        return None
+    return uid
+
+
+def _macos_user_argv(argv: list[str]) -> list[str]:
+    """Deliver a GUI command to the console user when the agent is root."""
+    if not _is_root():
+        return argv
+    uid = _macos_console_uid()
+    if not uid:
+        return argv
+    return ["launchctl", "asuser", str(uid), *argv]
+
+
+def _windows_service_session() -> bool:
+    """True when this process is not in the interactive console session (typical for SYSTEM)."""
+    if detect_os() != "windows":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.WTSGetActiveConsoleSessionId.restype = wintypes.DWORD
+        kernel32.ProcessIdToSessionId.argtypes = [wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.ProcessIdToSessionId.restype = wintypes.BOOL
+        kernel32.GetCurrentProcessId.restype = wintypes.DWORD
+        current = wintypes.DWORD()
+        if not kernel32.ProcessIdToSessionId(kernel32.GetCurrentProcessId(), ctypes.byref(current)):
+            return False
+        active = kernel32.WTSGetActiveConsoleSessionId()
+        if active == 0xFFFFFFFF:
+            return False
+        return current.value != active
+    except Exception:
+        return False
+
+
+def _windows_env_block(extra: dict[str, str]):
+    import ctypes
+
+    merged = os.environ.copy()
+    for key, value in extra.items():
+        merged[str(key)] = str(value).replace("\0", "")
+    items = []
+    for key, value in merged.items():
+        if not key or "=" in key or "\0" in key:
+            continue
+        items.append(f"{key}={value}")
+    items.sort(key=str.upper)
+    return ctypes.create_unicode_buffer("\0".join(items) + "\0\0")
+
+
+def _windows_run_as_console_user(command_line: str, extra_env: dict[str, str] | None = None) -> bool:
+    """Start a process in the active console session. Used from a SYSTEM service."""
     try:
         import ctypes
         from ctypes import wintypes
     except Exception:
-        return
+        return False
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     wtsapi32 = ctypes.WinDLL("wtsapi32", use_last_error=True)
     advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
     kernel32.WTSGetActiveConsoleSessionId.restype = wintypes.DWORD
     session_id = kernel32.WTSGetActiveConsoleSessionId()
     if session_id == 0xFFFFFFFF:
-        return
+        return False
     user_token = wintypes.HANDLE()
     wtsapi32.WTSQueryUserToken.argtypes = [wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
     wtsapi32.WTSQueryUserToken.restype = wintypes.BOOL
     if not wtsapi32.WTSQueryUserToken(session_id, ctypes.byref(user_token)):
-        return
+        return False
     primary = wintypes.HANDLE()
     token_all_access = 0xF01FF
     if not advapi32.DuplicateTokenEx(user_token, token_all_access, None, 2, 1, ctypes.byref(primary)):
         kernel32.CloseHandle(user_token)
-        return
+        return False
 
     class STARTUPINFO(ctypes.Structure):
         _fields_ = [
@@ -368,7 +446,10 @@ def _lock_windows() -> None:
     info.cb = ctypes.sizeof(STARTUPINFO)
     info.lpDesktop = "winsta0\\default"
     process = PROCESS_INFORMATION()
-    command = ctypes.create_unicode_buffer("rundll32.exe user32.dll,LockWorkStation")
+    command = ctypes.create_unicode_buffer(command_line)
+    env_block = _windows_env_block(extra_env) if extra_env else None
+    # CREATE_NO_WINDOW, plus CREATE_UNICODE_ENVIRONMENT when we pass a block.
+    flags = 0x08000400 if env_block is not None else 0x08000000
     advapi32.CreateProcessAsUserW(
         primary,
         None,
@@ -376,22 +457,183 @@ def _lock_windows() -> None:
         None,
         None,
         False,
-        0x08000000,
-        None,
+        flags,
+        env_block,
         None,
         ctypes.byref(info),
         ctypes.byref(process),
     )
+    started = bool(process.hProcess)
     if process.hProcess:
         kernel32.CloseHandle(process.hProcess)
     if process.hThread:
         kernel32.CloseHandle(process.hThread)
     kernel32.CloseHandle(primary)
     kernel32.CloseHandle(user_token)
+    return started
+
+
+def _run_desktop(argv: list[str], *, extra_env: dict[str, str] | None = None) -> None:
+    """Run a user-visible command. Root and SYSTEM target the interactive session."""
+    os_name = detect_os()
+    if os_name == "linux":
+        subprocess.run(_linux_user_argv(argv, extra_env), check=False, capture_output=True)
+        return
+    if os_name == "macos":
+        subprocess.run(_macos_user_argv(argv), check=False, capture_output=True)
+        return
+    if os_name == "windows":
+        if _windows_service_session():
+            _windows_run_as_console_user(subprocess.list2cmdline(argv), extra_env)
+            return
+        env = os.environ.copy()
+        if extra_env:
+            env.update(extra_env)
+        subprocess.run(argv, check=False, capture_output=True, env=env)
+        return
+    subprocess.run(argv, check=False, capture_output=True)
+
+
+def _notify_toast(os_name: str, title: str, message: str) -> None:
+    if os_name == "linux":
+        _run_desktop(["notify-send", "--", title, message])
+        return
+    if os_name == "macos":
+        _run_desktop(
+            [
+                "osascript",
+                "-e",
+                "on run argv",
+                "-e",
+                "display notification (item 1 of argv) with title (item 2 of argv)",
+                "-e",
+                "end run",
+                "--",
+                message,
+                title,
+            ]
+        )
+        return
+    if os_name == "windows":
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "Add-Type -AssemblyName System.Drawing; "
+            "$n = New-Object System.Windows.Forms.NotifyIcon; "
+            "$n.Icon = [System.Drawing.SystemIcons]::Information; "
+            "$n.Visible = $true; "
+            "$n.ShowBalloonTip(8000, $env:KC_TITLE, $env:KC_MESSAGE, "
+            "[System.Windows.Forms.ToolTipIcon]::Info); "
+            "Start-Sleep -Seconds 6; $n.Dispose()"
+        )
+        _run_desktop(
+            ["powershell", "-NoProfile", "-Command", ps],
+            extra_env=_notify_env(title, message),
+        )
+
+
+def _notify_window(os_name: str, title: str, message: str) -> None:
+    if os_name == "linux" and shutil.which("zenity"):
+        _run_desktop(["zenity", "--warning", "--title", title, "--text", message])
+        return
+    if os_name == "macos":
+        _run_desktop(
+            [
+                "osascript",
+                "-e",
+                "on run argv",
+                "-e",
+                "display dialog (item 1 of argv) with title (item 2 of argv) buttons {\"OK\"} default button 1",
+                "-e",
+                "end run",
+                "--",
+                message,
+                title,
+            ]
+        )
+        return
+    if os_name == "windows":
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "[System.Windows.Forms.MessageBox]::Show($env:KC_MESSAGE, $env:KC_TITLE)"
+        )
+        _run_desktop(
+            ["powershell", "-NoProfile", "-Command", ps],
+            extra_env=_notify_env(title, message),
+        )
+        return
+    _tk_message(title, message)
+
+
+def _tk_message(title: str, message: str) -> None:
+    import tkinter as tk
+    from tkinter import messagebox
+
+    root = tk.Tk()
+    root.withdraw()
+    messagebox.showwarning(title, message)
+    root.destroy()
+
+
+_MACOS_LOCK_SCREEN = (
+    "/System/Library/CoreServices/RemoteManagement/AppleVNCServer.bundle/"
+    "Contents/Support/LockScreen.app/Contents/MacOS/LockScreen"
+)
+_MACOS_CGSESSION = "/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession"
+_MACOS_LOGIN_FRAMEWORK = "/System/Library/PrivateFrameworks/login.framework/Versions/Current/login"
+
+
+def _try_sac_lock() -> bool:
+    """Lock via login.framework when the symbol exists. The old CGSession binary often does not."""
+    if not os.path.exists(_MACOS_LOGIN_FRAMEWORK):
+        return False
+    try:
+        import ctypes
+
+        lib = ctypes.CDLL(_MACOS_LOGIN_FRAMEWORK)
+        lock = lib.SACLockScreenImmediate
+        lock.restype = None
+        lock.argtypes = []
+        lock()
+        return True
+    except Exception:
+        return False
+
+
+def _macos_lock_command() -> list[str]:
+    """Prefer a real lock binary. Fall back to the Lock Screen shortcut in the GUI session."""
+    if os.path.isfile(_MACOS_LOCK_SCREEN):
+        return [_MACOS_LOCK_SCREEN]
+    if os.path.isfile(_MACOS_CGSESSION):
+        return [_MACOS_CGSESSION, "-suspend"]
+    return [
+        "osascript",
+        "-e",
+        'tell application "System Events" to key code 12 using {control down, command down}',
+    ]
+
+
+def _lock_macos() -> None:
+    if _try_sac_lock():
+        return
+    subprocess.run(_macos_user_argv(_macos_lock_command()), check=False, capture_output=True)
+
+
+def _lock_windows() -> None:
+    """Lock the interactive desktop. From a SYSTEM service, start the lock in that session."""
+    try:
+        subprocess.run(["rundll32.exe", "user32.dll,LockWorkStation"], check=False, capture_output=True)
+    except OSError:
+        pass
+    _windows_run_as_console_user("rundll32.exe user32.dll,LockWorkStation")
 
 
 def lock_session(*, dry_run: bool = False) -> None:
-    """Best-effort session lock / screen lock when access is denied."""
+    """Lock the interactive session when access is denied.
+
+    The agent repeats this every few seconds while the hub (or the offline
+    policy) still denies the session. A child who knows the password can
+    unlock, but only until the next attempt. This is not a kiosk lock.
+    """
     if dry_run:
         print("[lock] session lock requested")
         return
@@ -399,7 +641,7 @@ def lock_session(*, dry_run: bool = False) -> None:
     try:
         if os_name == "linux":
             commands = []
-            if hasattr(os, "geteuid") and os.geteuid() == 0:
+            if _is_root():
                 commands.append(["loginctl", "lock-sessions"])
             commands.extend(
                 (
@@ -409,15 +651,14 @@ def lock_session(*, dry_run: bool = False) -> None:
                 )
             )
             for cmd in commands:
-                r = subprocess.run(cmd, check=False, capture_output=True)
+                try:
+                    r = subprocess.run(cmd, check=False, capture_output=True)
+                except OSError:
+                    continue
                 if r.returncode == 0:
                     return
         elif os_name == "macos":
-            subprocess.run(
-                ["/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession", "-suspend"],
-                check=False,
-                capture_output=True,
-            )
+            _lock_macos()
         elif os_name == "windows":
             _lock_windows()
     except Exception:

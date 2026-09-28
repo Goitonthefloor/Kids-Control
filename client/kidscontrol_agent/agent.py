@@ -30,7 +30,12 @@ from kidscontrol_agent.inventory import (
     save_cached_watches,
 )
 from kidscontrol_agent.notify_style import set_active_env
+from kidscontrol_agent.offline import offline_policy, save_cached_policy
 from kidscontrol_agent.quota_warn import warn_running_quotas
+
+# While the hub says the session is denied, lock again on this cadence.
+# The poll interval stays longer; this only shortens the unlocked gap.
+LOCK_RETRY_SECONDS = 5
 
 
 def sync(server: str, device_key: str, *, active: bool = True) -> dict:
@@ -61,13 +66,14 @@ def sync(server: str, device_key: str, *, active: bool = True) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def enforce_policy(policy: dict, *, dry_run: bool = False) -> None:
+def enforce_policy(policy: dict, *, dry_run: bool = False, announce: bool = True) -> None:
     allow = bool(policy.get("allow_session"))
     reason = policy.get("reason_label") or policy.get("reason") or ""
     actions = policy.get("actions") or {}
 
     if not allow and actions.get("lock_session_when_denied", True):
-        notify("KidsControl", f"Zeit abgelaufen: {reason}", dry_run=dry_run)
+        if announce:
+            notify("KidsControl", f"Zeit abgelaufen: {reason}", dry_run=dry_run)
         lock_session(dry_run=dry_run)
 
     if actions.get("kill_blocked_apps", True):
@@ -122,19 +128,7 @@ def handle_commands(cfg: dict, policy: dict) -> None:
             print(f"Ergebnis-Meldung fehlgeschlagen: {exc}", file=sys.stderr)
 
 
-def run_once(cfg: dict) -> int:
-    if not cfg["device_key"]:
-        print("Fehler: KIDSCONTROL_DEVICE_KEY fehlt.", file=sys.stderr)
-        return 2
-    try:
-        policy = sync(cfg["server"], cfg["device_key"], active=user_session_active())
-    except urllib.error.HTTPError as exc:
-        print(f"HTTP-Fehler {exc.code}: {exc.read().decode('utf-8', errors='ignore')}", file=sys.stderr)
-        return 1
-    except Exception as exc:
-        print(f"Sync fehlgeschlagen: {exc}", file=sys.stderr)
-        return 1
-
+def _describe(policy: dict) -> None:
     child = (policy.get("child") or {}).get("display_name") or "?"
     status = "ALLOW" if policy.get("allow_session") else "DENY"
     print(
@@ -142,23 +136,85 @@ def run_once(cfg: dict) -> int:
         f"remaining={policy.get('remaining_minutes')} "
         f"blocked_apps={len(policy.get('blocked_apps') or [])}"
     )
+
+
+def _apply_offline(cfg: dict) -> tuple[int, bool, dict]:
+    """Hub unreachable: lock and keep enforcing the cached deny rules."""
+    policy = offline_policy()
+    _describe(policy)
+    enforce_policy(policy, dry_run=cfg["dry_run"])
+    return 1, True, policy
+
+
+def run_cycle(cfg: dict) -> tuple[int, bool, dict | None]:
+    """One poll. Returns (exit code, session denied, policy to keep enforcing)."""
+    if not cfg["device_key"]:
+        print("Fehler: KIDSCONTROL_DEVICE_KEY fehlt.", file=sys.stderr)
+        return 2, False, None
+    try:
+        policy = sync(cfg["server"], cfg["device_key"], active=user_session_active())
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = exc.read().decode("utf-8", errors="ignore")
+        except Exception:
+            detail = ""
+        print(f"HTTP-Fehler {exc.code}: {detail}", file=sys.stderr)
+        return _apply_offline(cfg)
+    except Exception as exc:
+        print(f"Sync fehlgeschlagen: {exc}", file=sys.stderr)
+        return _apply_offline(cfg)
+
+    save_cached_policy(policy)
+    _describe(policy)
     save_cached_quota(policy.get("quota_apps") or [])
     warn_running_quotas(policy.get("quota_apps") or [], dry_run=cfg["dry_run"])
     enforce_policy(policy, dry_run=cfg["dry_run"])
     handle_commands(cfg, policy)
     refresh_pending_updates()
-    return 0
+    denied = not bool(policy.get("allow_session"))
+    return 0, denied, policy if denied else None
+
+
+def run_once(cfg: dict) -> int:
+    code, _denied, _policy = run_cycle(cfg)
+    return code
+
+
+def _wait_until_next_sync(
+    seconds: int,
+    *,
+    policy: dict | None,
+    session_denied: bool,
+    dry_run: bool,
+) -> None:
+    """Sleep until the next poll. While denied, lock and stop apps again every few seconds."""
+    if seconds <= 0:
+        return
+    if not session_denied or dry_run or not policy:
+        time.sleep(seconds)
+        return
+    remaining = seconds
+    while remaining > 0:
+        chunk = min(LOCK_RETRY_SECONDS, remaining)
+        time.sleep(chunk)
+        remaining -= chunk
+        if remaining > 0:
+            enforce_policy(policy, dry_run=False, announce=False)
 
 
 def run_loop(cfg: dict) -> int:
     print(f"KidsControl Agent startet → {cfg['server']} (OS={detect_os()}, dry_run={cfg['dry_run']})")
     while True:
-        code = run_once(cfg)
-        # On auth errors, back off longer
+        code, denied, policy = run_cycle(cfg)
+        # Missing device key is a local config error; back off longer.
         sleep_for = cfg["poll_seconds"] if code != 2 else 60
         try:
-            # Prefer server-suggested interval when available
-            time.sleep(sleep_for)
+            _wait_until_next_sync(
+                sleep_for,
+                policy=policy,
+                session_denied=denied,
+                dry_run=cfg["dry_run"],
+            )
         except KeyboardInterrupt:
             print("Beendet.")
             return 0
