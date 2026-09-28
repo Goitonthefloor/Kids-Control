@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 
 from contextlib import asynccontextmanager
@@ -185,12 +186,46 @@ def _install_attempt_key(request: Request) -> str:
     return f"install:{host}"
 
 
+def _setting(db, key: str) -> str:
+    row = db.query(ServerSetting).filter_by(key=key).one_or_none()
+    return row.value if row and row.value else ""
+
+
+def _set_setting(db, key: str, value: str) -> None:
+    row = db.query(ServerSetting).filter_by(key=key).one_or_none()
+    if row:
+        row.value = value
+    else:
+        db.add(ServerSetting(key=key, value=value))
+
+
+def _live_install_token(db) -> str | None:
+    """Current household token, or None when it is missing or expired.
+
+    Does not create a token. Checking a link must not rotate the one parents see.
+    """
+    value = _setting(db, "install_token")
+    expires_raw = _setting(db, "install_token_expires")
+    if not value or not expires_raw:
+        return None
+    try:
+        expires = int(expires_raw)
+    except ValueError:
+        return None
+    if time.time() >= expires:
+        return None
+    return value
+
+
 def household_install_token(db) -> str:
-    row = db.query(ServerSetting).filter_by(key="install_token").one_or_none()
-    if row and row.value:
-        return row.value
+    """Return the household install token, issuing a new one when missing or expired."""
+    current = _live_install_token(db)
+    if current:
+        return current
     value = secrets.token_urlsafe(24)
-    db.add(ServerSetting(key="install_token", value=value))
+    expires = str(int(time.time()) + config.INSTALL_TOKEN_TTL_SECONDS)
+    _set_setting(db, "install_token", value)
+    _set_setting(db, "install_token_expires", expires)
     db.commit()
     return value
 
@@ -204,7 +239,8 @@ def _same_secret(left: str, right: str) -> bool:
 def _children_for_install_token(db, token: str) -> list[Child] | None:
     if not _INSTALL_TOKEN_RE.fullmatch(token or ""):
         return None
-    if _same_secret(token, household_install_token(db)):
+    live = _live_install_token(db)
+    if live and _same_secret(token, live):
         return db.query(Child).filter_by(active=True).order_by(Child.display_name.asc()).all()
     child = db.query(Child).filter_by(enroll_token=token, active=True).first()
     if not child:
@@ -254,11 +290,12 @@ def _setup_snapshot(db, device: Device, lang: str) -> dict:
         for event in events
     ]
     last = next((event.code for event in reversed(events) if event.code in {"finished", "failed"}), None)
-    done = last == "finished"
+    done = last in {"finished", "failed"}
+    ok = last == "finished"
     return {
         "messages": messages,
         "done": done,
-        "ok": done,
+        "ok": ok,
         "child": child_name,
         "device": device.name,
         "success": t(lang, "install_success", device=device.name, child=child_name),

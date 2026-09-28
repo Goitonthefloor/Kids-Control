@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- When the hub is unreachable the agent locks the session (fail-closed) and keeps enforcing the last saved app blocks
+- A failed child-PC setup stops the progress page and shows the error
+- Parent and client-setup passwords are stored as argon2id hashes; existing plaintext values in `data/server.env` are hashed on startup
+- The household install address expires after 4 hours
+- Session lock is repeated about every 5 seconds while access is denied; macOS no longer depends on the old CGSession binary, and notifications are aimed at the interactive user session
 - The README shows how to download the server with `curl` (or `git clone`) before the one-click setup
 - Each child card can block a program or give it a daily minute quota; the agent stops the program when the quota is used up
 - The child PC warns once each when a running program has 5, 2, or 1 minute of quota left

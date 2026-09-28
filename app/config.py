@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import secrets
 from pathlib import Path
+
+from app.passwords import hash_password, is_password_hash, passwords_match as _passwords_match
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DATA_DIR = ROOT / "data"
@@ -120,18 +121,74 @@ def agent_poll_seconds() -> int:
     return int(_env("KIDSCONTROL_AGENT_POLL_SECONDS", "30") or "30")
 
 
+# Household install links can enroll any child. They expire so a copied URL
+# does not stay valid forever. Several PCs can still use the same link until then.
+INSTALL_TOKEN_TTL_SECONDS = 4 * 60 * 60
+
+
 def is_configured() -> bool:
     stored_secret = _env("KIDSCONTROL_SECRET")
     return bool(admin_password()) and bool(setup_password()) and bool(stored_secret) and stored_secret not in WEAK_SECRETS
 
 
 def passwords_match(given: str, expected: str) -> bool:
-    if not given or not expected:
-        return False
-    return secrets.compare_digest(
-        hashlib.sha256(given.encode("utf-8")).digest(),
-        hashlib.sha256(expected.encode("utf-8")).digest(),
-    )
+    return _passwords_match(given, expected)
+
+
+def _quote_env(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def migrate_plaintext_passwords() -> None:
+    """Rewrite plaintext parent/setup passwords in server.env as argon2 hashes.
+
+    An explicit process environment value is replaced only when it is still the
+    same plaintext that was just hashed. A different override is left in place.
+    """
+    path = server_env_path()
+    data = parse_env_file(path)
+    if not data:
+        return
+    updates: dict[str, str] = {}
+    for key in ("KIDSCONTROL_ADMIN_PASSWORD", "KIDSCONTROL_SETUP_PASSWORD"):
+        value = data.get(key, "")
+        if not value or is_password_hash(value):
+            continue
+        updates[key] = hash_password(value)
+        if os.environ.get(key) == value:
+            os.environ[key] = updates[key]
+    if not updates:
+        return
+    _rewrite_env_keys(path, updates)
+
+
+def _rewrite_env_keys(path: Path, updates: dict[str, str]) -> None:
+    original = path.read_text(encoding="utf-8")
+    lines = original.splitlines()
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            out.append(line)
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key in updates:
+            out.append(f"{key}={_quote_env(updates[key])}")
+            seen.add(key)
+        else:
+            out.append(line)
+    for key, value in updates.items():
+        if key not in seen:
+            out.append(f"{key}={_quote_env(value)}")
+    text = "\n".join(out)
+    if text and not text.endswith("\n"):
+        text += "\n"
+    path.write_text(text, encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
 
 
 def __getattr__(name: str):
@@ -151,3 +208,4 @@ def __getattr__(name: str):
 
 
 load_server_env_into_process()
+migrate_plaintext_passwords()

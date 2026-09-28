@@ -11,6 +11,7 @@ from pathlib import Path
 
 from app import config
 from app.i18n import normalize_lang, t
+from app.passwords import hash_password
 
 MIN_PASSWORD = 8
 
@@ -47,10 +48,12 @@ def write_server_env(
 ) -> Path:
     target = path or config.server_env_path()
     target.parent.mkdir(parents=True, exist_ok=True)
+    admin_stored = hash_password(admin_password)
+    setup_stored = hash_password(setup_password)
     lines = [
         f"KIDSCONTROL_ADMIN_USER={_quote(admin_user)}",
-        f"KIDSCONTROL_ADMIN_PASSWORD={_quote(admin_password)}",
-        f"KIDSCONTROL_SETUP_PASSWORD={_quote(setup_password)}",
+        f"KIDSCONTROL_ADMIN_PASSWORD={_quote(admin_stored)}",
+        f"KIDSCONTROL_SETUP_PASSWORD={_quote(setup_stored)}",
         f"KIDSCONTROL_SECRET={_quote(secret)}",
         f"KIDSCONTROL_TZ={_quote(timezone_name)}",
         f"HOST={_quote(host)}",
@@ -64,8 +67,8 @@ def write_server_env(
     except OSError:
         pass
     os.environ["KIDSCONTROL_ADMIN_USER"] = admin_user
-    os.environ["KIDSCONTROL_ADMIN_PASSWORD"] = admin_password
-    os.environ["KIDSCONTROL_SETUP_PASSWORD"] = setup_password
+    os.environ["KIDSCONTROL_ADMIN_PASSWORD"] = admin_stored
+    os.environ["KIDSCONTROL_SETUP_PASSWORD"] = setup_stored
     os.environ["KIDSCONTROL_SECRET"] = secret
     os.environ["KIDSCONTROL_TZ"] = timezone_name
     os.environ["HOST"] = host

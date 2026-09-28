@@ -13,7 +13,7 @@ Auf der Übersicht und auf der Kind-Seite steht eine Adresse, zum Beispiel `http
 3. Der Installer für das erkannte System wird heruntergeladen. Die Datei starten und die Administratorabfrage bestätigen.
 4. Der PC schickt Name, System und Schlüssel an den Server. Jede Rückmeldung erscheint in der Liste auf der Seite: Installer gestartet, Python bereit, Agent geladen, Daten übertragen, Dienst gestartet, fertig.
 
-Dieselbe Adresse gilt für weitere PCs. Pro PC einmal das Kind wählen.
+Dieselbe Adresse gilt **4 Stunden** und kann in der Zeit weitere PCs einrichten. Pro PC einmal das Kind wählen. Danach zeigt die Eltern-Seite eine neue Adresse; alte Links funktionieren nicht mehr. Ein fehlender Ablaufzeitpunkt (älterer Stand) gilt als abgelaufen. Der Einrichtungscode je Kind (Befehl und One-Click-Datei) bleibt einmalig und gilt nur für dieses Kind.
 
 ## One-Click
 
@@ -100,11 +100,12 @@ KIDSCONTROL_DRY_RUN=1 python -m kidscontrol_agent --once --env /pfad/zu/client.e
 ## Was der Agent tut
 
 1. `POST /api/v1/agent/sync` mit Device-Key  
-2. Wenn Sitzung verboten → Bildschirm/Sitzung sperren (best effort)  
+2. Wenn Sitzung verboten → Bildschirm/Sitzung sperren und das etwa alle 5 Sekunden wiederholen  
 3. Laufende Prozesse gegen App-Regeln matchen und beenden  
 4. Programme mit Tageskontingent melden, solange das Kontingent reicht, und danach beenden  
 5. Warnen, solange so ein Programm läuft und noch 5, 2 oder 1 Minute übrig sind. Jede Stufe einmal.  
 6. Vorwarnung anzeigen, wenn das Zeitfenster endet  
+7. Ist der Hub nicht erreichbar, die Sitzung sperren (fail-closed) und die zuletzt bekannten App-Sperren weiter durchsetzen. Kontingent-Programme werden offline ebenfalls beendet, weil die Restzeit ohne Hub nicht mehr stimmt. Die nächste erfolgreiche Abfrage hebt die Sperre nur auf, wenn der Hub die Sitzung erlaubt.
 
 Die Art der Warnung stellt das Menü auf dem Kinder-PC ein:
 
@@ -112,15 +113,19 @@ Die Art der Warnung stellt das Menü auf dem Kinder-PC ein:
 python3 -m kidscontrol_agent --settings
 ```
 
-**Meldungsfenster** bleibt offen, bis es bestätigt wird. **Toast** ist ein kurzer Hinweis und verschwindet von selbst. Ohne Auswahl bleibt es beim bisherigen Verhalten: Windows zeigt ein Fenster, Linux und macOS einen Toast. Die Auswahl liegt neben `client.env` und gilt ab der nächsten Warnung. Das Menü braucht dieselben Rechte wie der Agent, sonst kann es die Datei nicht schreiben.  
+**Meldungsfenster** bleibt offen, bis es bestätigt wird. **Toast** ist ein kurzer Hinweis und verschwindet von selbst. Ohne Auswahl bleibt es beim bisherigen Verhalten: Windows zeigt ein Fenster, Linux und macOS einen Toast. Die Auswahl liegt neben `client.env` und gilt ab der nächsten Warnung. Das Menü braucht dieselben Rechte wie der Agent, sonst kann es die Datei nicht schreiben.
+
+Läuft der Agent als root oder SYSTEM, gehen Meldungen in die grafische Sitzung: Linux über `runuser` (sonst `sudo -n`) und den Session-Bus des angemeldeten Benutzers, macOS über `launchctl asuser`, Windows über einen Prozess in der aktiven Konsole. Ohne lokale grafische Sitzung bleibt die Meldung unsichtbar.
 
 ## OS-Hinweise
 
 | OS | Prozessliste | Beenden | Sitzungssperre |
 |----|--------------|---------|----------------|
-| Linux | `ps` | `kill` | `loginctl` / Screensaver |
-| macOS | `ps` | `kill` | CGSession |
-| Windows | `tasklist` | `taskkill` | `LockWorkStation` |
+| Linux | `ps` | `kill` | `loginctl lock-sessions` (root), sonst `loginctl lock-session` / Screensaver |
+| macOS | `ps` | `kill` | `SACLockScreenImmediate`, sonst `LockScreen.app`, sonst altes `CGSession -suspend`, sonst die Sperr-Tastenkombination in der Konsolensitzung |
+| Windows | `tasklist` | `taskkill` | `LockWorkStation`, aus einer SYSTEM-Sitzung in der aktiven Konsole |
+
+Solange die Sitzung verboten ist, wiederholt der Agent die Sperre etwa alle 5 Sekunden. Wer das Passwort des Kinderkontos kennt, kann entsperren, aber nur bis zum nächsten Versuch. Das ist keine Kiosk-Sperre. macOS kann eine zukünftige Version der privaten Lock-API ignorieren; dann bleibt der Fallback best effort.
 
 Der Agent läuft als Systemprozess (root bzw. SYSTEM). Ein Kinderkonto ohne Administratorrechte kann ihn nicht beenden.
 

@@ -41,7 +41,7 @@ Nicht nötig: Active Directory, Docker, dieselbe Distribution auf allen Rechnern
 |---|---|---|---|
 | Version | Windows 10 oder 11 | macOS 12 oder neuer | aktuelle Distribution mit systemd |
 | Python | 3.10+ | 3.10+ | 3.10+ |
-| Sitzung sperren | `LockWorkStation` | Bildschirmsperre über das System | `loginctl` oder Bildschirmschoner |
+| Sitzung sperren | `LockWorkStation` in der aktiven Sitzung | Systemsperre (nicht nur das alte CGSession) | `loginctl` oder Bildschirmschoner |
 | Apps beenden | `taskkill` | `kill` | `kill` |
 | OpenSSH | optional, Client vorhanden | eingebaut | wird beim Setup per apt, dnf oder pacman installiert (`openssh-server`) |
 | Updates | optional `winget` | optional Homebrew | `apt`, `dnf` oder `pacman`; Updates brauchen passwortloses `sudo` |
@@ -87,7 +87,7 @@ python -m app.setup
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Die Datei `data/server.env` nicht ins Git legen.
+Die Datei `data/server.env` nicht ins Git legen. Die Passwörter stehen dort als Hash. Fällt der Hub aus, sperrt der Agent auf dem Kinder-PC die Sitzung und hält die zuletzt bekannten App-Sperren. Die Einrichtungsadresse gilt 4 Stunden.
 
 Drei Geheimnisse, die nicht dasselbe sind:
 
@@ -170,7 +170,7 @@ Not required: Active Directory, Docker, or the same distribution on every machin
 |---|---|---|---|
 | Version | Windows 10 or 11 | macOS 12 or newer | a current distribution with systemd |
 | Python | 3.10+ | 3.10+ | 3.10+ |
-| Lock session | `LockWorkStation` | system screen lock | `loginctl` or a screensaver |
+| Lock session | `LockWorkStation` in the active session | system screen lock (not only the old CGSession binary) | `loginctl` or a screensaver |
 | Stop apps | `taskkill` | `kill` | `kill` |
 | OpenSSH | optional; the client is usually present | built in | installed during setup by apt, dnf, or pacman (`openssh-server`) |
 | Updates | optional `winget` | optional Homebrew | `apt`, `dnf`, or `pacman`; updates need passwordless `sudo` |
@@ -216,7 +216,7 @@ python -m app.setup
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Do not commit `data/server.env`.
+Do not commit `data/server.env`. Passwords in that file are stored as hashes. If the hub is unreachable, the agent on the child PC locks the session and keeps enforcing the last known app blocks. The install address works for 4 hours.
 
 Three secrets that are not the same thing:
 

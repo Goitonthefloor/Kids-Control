@@ -69,4 +69,4 @@ Der Key bindet das Gerät an genau ein Kind-Profil.
 
 - Client → Server (Pull)
 - Keine Push-Abhängigkeit
-- Offline: Agent kann zuletzt bekannte Sperr-Policy hart halten (Erweiterung); v1.0 erfordert Erreichbarkeit für Freigaben
+- Offline: ist der Hub nicht erreichbar (Netzwerk, Timeout oder HTTP-Fehler), sperrt der Agent die Sitzung (**fail-closed**). Die letzte erfolgreiche Policy liegt lokal (`~/.cache/kidscontrol/policy.json`, Modus `0600`). Gesperrte Programme und Programme mit Tageskontingent werden weiter beendet. Ohne gespeicherte Policy wird nur die Sitzung gesperrt. Eine Freigabe gilt erst nach dem nächsten erfolgreichen Sync. Solange die Sitzung verboten ist, sperrt der Agent etwa alle 5 Sekunden erneut.

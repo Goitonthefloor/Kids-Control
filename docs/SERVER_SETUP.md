@@ -39,9 +39,9 @@ python -m app.setup
 - Eltern-Benutzername und Eltern-Passwort (Web-Login)
 - Client-Setup-Passwort (Haus-Passwort, einmal für den Server)
 
-Beide Passwörter mindestens 8 Zeichen und nicht gleich. Die Datei `data/server.env` wird mit Rechten `0600` geschrieben.
+Beide Passwörter mindestens 8 Zeichen und nicht gleich. Die Datei `data/server.env` wird mit Rechten `0600` geschrieben. Die beiden Passwörter stehen dort als **Argon2id-Hash**, nicht im Klartext. Ein älterer Klartext in dieser Datei wird beim nächsten Start des Hubs gehasht und nicht wieder im Klartext zurückgeschrieben. Ein explizit gesetzter Umgebungsvariablen-Wert, der von der Datei abweicht, bleibt für diesen Prozess gültig.
 
-Das Client-Setup-Passwort ist **nicht** der Code für den Kinder-PC. Die Übersicht zeigt eine Adresse (`/install/…`). Die auf dem Kinder-PC im Browser öffnen, das Kind wählen und den Installer starten. Die Seite legt den Geräteeintrag an und zeigt die Rückmeldungen. Der One-Click-Download bleibt der Notweg, wenn du die Datei am Eltern-Rechner speichern willst. Das Client-Setup-Passwort brauchst du nur, wenn der Kind-Code fehlt: `python -m kidscontrol_agent.setup --server … --setup-password … --child kurz-id`.
+Das Client-Setup-Passwort ist **nicht** der Code für den Kinder-PC. Die Übersicht zeigt eine Adresse (`/install/…`). Die auf dem Kinder-PC im Browser öffnen, das Kind wählen und den Installer starten. Die Seite legt den Geräteeintrag an und zeigt die Rückmeldungen. Dieselbe Adresse gilt 4 Stunden und kann in der Zeit mehrere PCs einrichten. Danach erzeugt die Eltern-Seite eine neue; die alte wird abgelehnt. Schlägt die Einrichtung fehl, endet die Fortschrittsseite mit einer Fehlermeldung statt weiter zu pollen. Der One-Click-Download bleibt der Notweg, wenn du die Datei am Eltern-Rechner speichern willst. Das Client-Setup-Passwort brauchst du nur, wenn der Kind-Code fehlt: `python -m kidscontrol_agent.setup --server … --setup-password … --child kurz-id`.
 
 Nicht-interaktiv:
 
