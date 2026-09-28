@@ -48,7 +48,7 @@ Nicht nötig: Active Directory, Docker, dieselbe Distribution auf allen Rechnern
 
 ## Einrichtung
 
-Version **1.6.0**.
+Version **1.7.0**.
 
 ### 1. Repo auf den Server holen
 
@@ -177,7 +177,7 @@ Not required: Active Directory, Docker, or the same distribution on every machin
 
 ## Setup
 
-Version **1.6.0**.
+Version **1.7.0**.
 
 ### 1. Get the repo onto the server
 
