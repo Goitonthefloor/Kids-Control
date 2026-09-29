@@ -1,6 +1,6 @@
 """The agent must install as a system service, not as the child account."""
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from kidscontrol_agent.enforce import is_protected_process
 from kidscontrol_agent.service_install import (
@@ -15,8 +15,8 @@ from kidscontrol_agent.setup import main
 def test_systemd_unit_runs_as_root():
     text = render_systemd_unit(
         python="/usr/bin/python3",
-        install_dir=Path("/opt/kidscontrol-client"),
-        env_file=Path("/etc/kidscontrol/client.env"),
+        install_dir=PurePosixPath("/opt/kidscontrol-client"),
+        env_file=PurePosixPath("/etc/kidscontrol/client.env"),
     )
     assert "User=root" in text
     assert "Group=root" in text
@@ -27,8 +27,8 @@ def test_systemd_unit_runs_as_root():
 def test_launchd_plist_runs_as_root():
     text = render_launchd_plist(
         python="/usr/bin/python3",
-        install_dir=Path("/opt/kidscontrol-client"),
-        env_file=Path("/etc/kidscontrol/client.env"),
+        install_dir=PurePosixPath("/opt/kidscontrol-client"),
+        env_file=PurePosixPath("/etc/kidscontrol/client.env"),
     )
     assert "<key>UserName</key>" in text
     assert "<string>root</string>" in text
@@ -49,7 +49,8 @@ def test_windows_task_runs_as_system():
     assert "kidscontrol_loop" in runner
 
 
-def test_setup_refuses_unprivileged_account():
+def test_setup_refuses_unprivileged_account(monkeypatch):
+    monkeypatch.setattr("kidscontrol_agent.setup.is_privileged", lambda: False)
     code = main(["--server", "http://127.0.0.1:9", "--token", "test-token"])
     assert code == 1
 

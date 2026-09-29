@@ -66,7 +66,7 @@ def test_linux_toast_targets_the_graphical_user(monkeypatch):
         lambda name: "/usr/sbin/runuser" if name == "runuser" else None,
     )
     monkeypatch.setattr(
-        "kidscontrol_agent.enforce.subprocess.run",
+        "kidscontrol_agent.enforce._spawn_notice",
         lambda argv, **kwargs: calls.append(list(argv)),
     )
     notify("Titel", "Text", style="toast")
@@ -119,7 +119,7 @@ def test_windows_message_runs_in_the_console_session(monkeypatch):
     notify("Titel", "Hallo", style="window")
     command, extra = spawned[0]
     assert "powershell" in command
-    assert "MessageBox" in command
+    assert "Popup" in command
     assert extra["KC_TITLE"] == "Titel"
     assert extra["KC_MESSAGE"] == "Hallo"
     assert "Hallo" not in command

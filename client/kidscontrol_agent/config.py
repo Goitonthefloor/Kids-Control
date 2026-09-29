@@ -28,12 +28,14 @@ def _parse_env_file(path: Path) -> dict[str, str]:
 
 def load_config(env_path: str | None = None) -> dict:
     file_env: dict[str, str] = {}
+    selected_path = Path(env_path).resolve() if env_path else None
     if env_path:
         file_env = _parse_env_file(Path(env_path))
     else:
         for candidate in DEFAULT_ENV_PATHS:
             if candidate.is_file():
                 file_env = _parse_env_file(candidate)
+                selected_path = candidate.resolve()
                 break
 
     def get(name: str, default: str = "") -> str:
@@ -48,4 +50,7 @@ def load_config(env_path: str | None = None) -> dict:
         "device_key": device_key,
         "poll_seconds": max(5, poll),
         "dry_run": dry_run,
+        "account": get("KIDSCONTROL_ACCOUNT"),
+        "account_journal": str((selected_path.parent if selected_path else
+            (Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "KidsControl" if os.name == "nt" else Path("/etc/kidscontrol"))) / "account-lock.json"),
     }

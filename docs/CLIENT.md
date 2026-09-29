@@ -37,7 +37,7 @@ Nach dem Anlegen eines Kindes zeigt die Eltern-UI einen Befehl. Auf dem Kinder-P
 
 ```bash
 cd client
-sudo python3 -m kidscontrol_agent.setup --server http://SERVER:8000 --token CODE
+sudo KIDSCONTROL_ACCOUNT=kinder python3 -m kidscontrol_agent.setup --server http://SERVER:8000 --token CODE --account kinder
 ```
 
 Der Code steht nur auf der Kind-Seite und gilt nur für dieses Kind. Das Client-Setup-Passwort vom Server ist dafür nicht nötig. Unter Linux installiert das Setup OpenSSH (`apt-get`, `dnf` oder `pacman`), erzeugt den SSH-Schlüssel unter `/root/.config/kidscontrol/ssh/id_ed25519`, trägt den öffentlichen Schlüssel in `/root/.ssh/authorized_keys` ein und sendet den privaten Schlüssel an den Server. Der Server speichert ihn unter `data/keys/` und schaltet SSH für das Linux-Gerät an. Das Kinderkonto kann diesen Schlüssel nicht entfernen.
@@ -45,7 +45,7 @@ Der Code steht nur auf der Kind-Seite und gilt nur für dieses Kind. Das Client-
 Ohne Kind-Code geht derselbe Schritt als Notweg mit dem Client-Setup-Passwort:
 
 ```bash
-sudo python3 -m kidscontrol_agent.setup --server http://SERVER:8000 --setup-password GEHEIM --child mia
+sudo KIDSCONTROL_ACCOUNT=kinder python3 -m kidscontrol_agent.setup --server http://SERVER:8000 --setup-password GEHEIM --child mia --account kinder
 ```
 
 ## Setup
@@ -54,7 +54,7 @@ After you add a child, the parent UI shows one command. On the child PC:
 
 ```bash
 cd client
-sudo python3 -m kidscontrol_agent.setup --server http://SERVER:8000 --token CODE
+sudo KIDSCONTROL_ACCOUNT=kinder python3 -m kidscontrol_agent.setup --server http://SERVER:8000 --token CODE --account kinder
 ```
 
 On Linux this installs OpenSSH, creates an SSH key for root, and uploads the private key to the controller.
@@ -63,10 +63,18 @@ Linux als Systemdienst (root, nicht das Kinderkonto):
 
 ```bash
 sudo ./install-linux.sh
-sudo PYTHONPATH=/opt/kidscontrol-client python3 -m kidscontrol_agent.setup --out /etc/kidscontrol/client.env
+sudo PYTHONPATH=/opt/kidscontrol-client KIDSCONTROL_ACCOUNT=kinder python3 -m kidscontrol_agent.setup --account kinder --out /etc/kidscontrol/client.env
 ```
 
 `kidscontrol_agent.setup` aktiviert den Dienst. Ohne root bricht es ab.
+
+Der Agent verlangt beim Setup den lokalen Anmeldenamen des Kinderkontos (`--account`).
+Dieses Konto wird bei abgelehnter Policy sofort für neue Anmeldungen gesperrt und
+nach der Warnfrist abgemeldet; Eltern- und Administratorkonten bleiben unangetastet.
+Bei Freigabe wird nur der vorherige Zustand dieses Kinderkontos wiederhergestellt.
+Falls der Agent nicht mehr startet, kann ein Administrator mit
+`python3 -m kidscontrol_agent --env /etc/kidscontrol/client.env --restore-account`
+die protokollierte Kontosperre zurücknehmen.
 
 ## Konfiguration
 

@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
-from app.db import AppRule, AppUsage, Child, DailyUsage, DayOverride, Override, Schedule
+from app.db import AppRule, AppUsage, AppUsageSpan, Child, DailyUsage, DayOverride, DeviceAppClock, Override, Schedule
 
 REASON_LABELS_DE = {
     "override": "Sonderfreigabe",
@@ -249,7 +249,7 @@ def program_rows(db: Session, child: Child) -> list[dict]:
     return rows
 
 
-def tick_running_apps(db: Session, child: Child, running_ids: list) -> None:
+def tick_running_apps(db: Session, child: Child, running_ids: list, *, device_id: int) -> None:
     """Add elapsed time for quota programs the agent currently sees running."""
     wanted: set[int] = set()
     if isinstance(running_ids, list):
@@ -262,7 +262,9 @@ def tick_running_apps(db: Session, child: Child, running_ids: list) -> None:
     today = now_local(tz).date()
     day = today.isoformat()
     now_utc = datetime.now(timezone.utc)
+    db.query(AppUsageSpan).filter(AppUsageSpan.end_at < now_utc - timedelta(seconds=180)).delete(synchronize_session=False)
     cutoff = (today - timedelta(days=14)).isoformat()
+    db.query(DeviceAppClock).filter(DeviceAppClock.day < cutoff).delete(synchronize_session=False)
     db.query(AppUsage).filter(AppUsage.child_id == child.id, AppUsage.day < cutoff).delete(synchronize_session=False)
     rules = (
         db.query(AppRule)
@@ -270,6 +272,11 @@ def tick_running_apps(db: Session, child: Child, running_ids: list) -> None:
         .all()
     )
     for rule in rules:
+        clock = db.get(DeviceAppClock, (device_id, rule.id, day))
+        if clock is None:
+            clock = DeviceAppClock(device_id=device_id, rule_id=rule.id, day=day,
+                                   last_seen_at=now_utc, running=rule.id in wanted)
+            db.add(clock)
         usage = db.query(AppUsage).filter_by(rule_id=rule.id, day=day).first()
         if usage is None:
             db.add(
@@ -284,17 +291,38 @@ def tick_running_apps(db: Session, child: Child, running_ids: list) -> None:
             )
             db.flush()
             continue
-        if rule.id in wanted:
-            last = as_aware_utc(usage.last_seen_at) or now_utc
+        last = as_aware_utc(clock.last_seen_at) or now_utc
+        if clock.running and 0 < (now_utc - last).total_seconds() <= 180:
+            delta = _charge_interval(db, rule.id, day, last, now_utc)
             used, remainder = apply_usage_tick(
                 int(usage.used_minutes or 0),
                 int(usage.remainder_seconds or 0),
-                (now_utc - last).total_seconds(),
+                delta,
             )
             usage.used_minutes = used
             usage.remainder_seconds = remainder
-        usage.last_seen_at = now_utc
+            usage.last_seen_at = now_utc
+        clock.last_seen_at = now_utc
+        clock.running = rule.id in wanted
     db.flush()
+
+
+def _charge_interval(db: Session, rule_id: int, day: str, start: datetime, end: datetime) -> float:
+    """Return only newly covered seconds, even for late overlapping reports."""
+    spans = db.query(AppUsageSpan).filter(
+        AppUsageSpan.rule_id == rule_id, AppUsageSpan.day == day,
+        AppUsageSpan.start_at <= end, AppUsageSpan.end_at >= start,
+    ).all()
+    uncovered = (end - start).total_seconds()
+    left, right = start, end
+    for span in spans:
+        a, b = as_aware_utc(span.start_at), as_aware_utc(span.end_at)
+        uncovered -= max(0, (min(end, b) - max(start, a)).total_seconds())
+        left, right = min(left, a), max(right, b)
+        db.delete(span)
+    db.add(AppUsageSpan(rule_id=rule_id, day=day, start_at=left, end_at=right))
+    db.flush()
+    return max(0, uncovered)
 
 
 def active_quota_apps(db: Session, child: Child) -> list[dict]:

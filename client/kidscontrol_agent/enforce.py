@@ -7,6 +7,8 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
+import csv
 from dataclasses import dataclass
 
 # Names a root agent must never stop. Short patterns would otherwise take down the machine.
@@ -32,6 +34,16 @@ class RunningProcess:
     name: str
 
 
+_target_user = ""
+_target_uid: int | None = None
+
+
+def configure_target(user: str, identity: str) -> None:
+    global _target_user, _target_uid
+    _target_user = user
+    _target_uid = int(identity) if identity.isdigit() else None
+
+
 def detect_os() -> str:
     system = platform.system().lower()
     if system == "darwin":
@@ -52,7 +64,7 @@ def list_processes() -> list[RunningProcess]:
 
 def _list_posix() -> list[RunningProcess]:
     try:
-        out = subprocess.check_output(["ps", "-A", "-o", "pid=,comm="], text=True, stderr=subprocess.DEVNULL)
+        out = subprocess.check_output(["ps", "-A", "-o", "pid=,uid=,comm="], text=True, stderr=subprocess.DEVNULL, timeout=5)
     except Exception:
         return []
     procs: list[RunningProcess] = []
@@ -60,14 +72,17 @@ def _list_posix() -> list[RunningProcess]:
         line = line.strip()
         if not line:
             continue
-        parts = line.split(None, 1)
-        if len(parts) != 2:
+        parts = line.split(None, 2)
+        if len(parts) != 3:
             continue
         try:
             pid = int(parts[0])
+            uid = int(parts[1])
         except ValueError:
             continue
-        name = parts[1].strip()
+        if _target_uid is not None and uid != _target_uid:
+            continue
+        name = parts[2].strip()
         # basename for paths
         if "/" in name:
             name = name.rsplit("/", 1)[-1]
@@ -78,21 +93,24 @@ def _list_posix() -> list[RunningProcess]:
 def _list_windows() -> list[RunningProcess]:
     try:
         out = subprocess.check_output(
-            ["tasklist", "/FO", "CSV", "/NH"],
+            ["tasklist", "/V", "/FO", "CSV", "/NH"],
             text=True,
             stderr=subprocess.DEVNULL,
             encoding="utf-8",
             errors="ignore",
+            timeout=5,
         )
     except Exception:
         return []
     procs: list[RunningProcess] = []
-    for line in out.splitlines():
-        # "name.exe","PID","Session","Session#","Mem"
-        m = re.match(r'^"([^"]+)","(\d+)"', line.strip())
-        if not m:
+    for row in csv.reader(out.splitlines()):
+        if len(row) < 2 or not row[1].isdigit():
             continue
-        procs.append(RunningProcess(pid=int(m.group(2)), name=m.group(1)))
+        if _target_user:
+            owner = os.environ.get("COMPUTERNAME", "") + "\\" + _target_user
+            if len(row) < 7 or row[6].casefold() != owner.casefold():
+                continue
+        procs.append(RunningProcess(pid=int(row[1]), name=row[0]))
     return procs
 
 
@@ -164,6 +182,14 @@ def kill_pid(pid: int, *, dry_run: bool = False) -> bool:
 def user_session_active() -> bool:
     """True when a person is logged in. Failures keep enforcement on."""
     os_name = detect_os()
+    if _target_user:
+        if os_name == "linux":
+            return _linux_desktop_session() is not None
+        if os_name == "macos":
+            return _macos_console_uid() == _target_uid
+        if os_name == "windows":
+            from kidscontrol_agent.account import windows_sessions
+            return bool(windows_sessions(_target_user))
     try:
         if os_name == "linux":
             out = subprocess.check_output(
@@ -201,6 +227,10 @@ def notify(title: str, message: str, *, dry_run: bool = False, style: str | None
     chosen = normalize_style(style) or load_notify_style()
     os_name = detect_os()
     try:
+        if _target_user and os_name == "macos" and _macos_console_uid() != _target_uid:
+            return
+        if _target_user and os_name == "linux" and _linux_desktop_session() is None:
+            return
         if chosen == "window":
             _notify_window(os_name, title, message)
         else:
@@ -291,6 +321,8 @@ def _linux_desktop_session() -> dict[str, str] | None:
         if info.get("Type") not in {"x11", "wayland", "mir"}:
             continue
         user = info.get("Name") or ""
+        if _target_user and user != _target_user:
+            continue
         uid = info.get("User") or ""
         if not uid.isdigit() or not _SESSION_USER_RE.fullmatch(user):
             continue
@@ -399,6 +431,12 @@ def _windows_run_as_console_user(command_line: str, extra_env: dict[str, str] | 
     advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
     kernel32.WTSGetActiveConsoleSessionId.restype = wintypes.DWORD
     session_id = kernel32.WTSGetActiveConsoleSessionId()
+    if _target_user:
+        from kidscontrol_agent.account import windows_sessions
+        sessions = windows_sessions(_target_user)
+        if not sessions:
+            return False
+        session_id = session_id if session_id in sessions else sessions[0]
     if session_id == 0xFFFFFFFF:
         return False
     user_token = wintypes.HANDLE()
@@ -408,6 +446,11 @@ def _windows_run_as_console_user(command_line: str, extra_env: dict[str, str] | 
         return False
     primary = wintypes.HANDLE()
     token_all_access = 0xF01FF
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    advapi32.DuplicateTokenEx.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p,
+                                        ctypes.c_int, ctypes.c_int, ctypes.POINTER(wintypes.HANDLE)]
+    advapi32.DuplicateTokenEx.restype = wintypes.BOOL
     if not advapi32.DuplicateTokenEx(user_token, token_all_access, None, 2, 1, ctypes.byref(primary)):
         kernel32.CloseHandle(user_token)
         return False
@@ -450,6 +493,12 @@ def _windows_run_as_console_user(command_line: str, extra_env: dict[str, str] | 
     env_block = _windows_env_block(extra_env) if extra_env else None
     # CREATE_NO_WINDOW, plus CREATE_UNICODE_ENVIRONMENT when we pass a block.
     flags = 0x08000400 if env_block is not None else 0x08000000
+    advapi32.CreateProcessAsUserW.argtypes = [
+        wintypes.HANDLE, wintypes.LPCWSTR, wintypes.LPWSTR, ctypes.c_void_p, ctypes.c_void_p,
+        wintypes.BOOL, wintypes.DWORD, ctypes.c_void_p, wintypes.LPCWSTR,
+        ctypes.POINTER(STARTUPINFO), ctypes.POINTER(PROCESS_INFORMATION),
+    ]
+    advapi32.CreateProcessAsUserW.restype = wintypes.BOOL
     advapi32.CreateProcessAsUserW(
         primary,
         None,
@@ -477,10 +526,10 @@ def _run_desktop(argv: list[str], *, extra_env: dict[str, str] | None = None) ->
     """Run a user-visible command. Root and SYSTEM target the interactive session."""
     os_name = detect_os()
     if os_name == "linux":
-        subprocess.run(_linux_user_argv(argv, extra_env), check=False, capture_output=True)
+        _spawn_notice(_linux_user_argv(argv, extra_env))
         return
     if os_name == "macos":
-        subprocess.run(_macos_user_argv(argv), check=False, capture_output=True)
+        _spawn_notice(_macos_user_argv(argv))
         return
     if os_name == "windows":
         if _windows_service_session():
@@ -489,9 +538,23 @@ def _run_desktop(argv: list[str], *, extra_env: dict[str, str] | None = None) ->
         env = os.environ.copy()
         if extra_env:
             env.update(extra_env)
-        subprocess.run(argv, check=False, capture_output=True, env=env)
+        _spawn_notice(argv, env=env)
         return
-    subprocess.run(argv, check=False, capture_output=True)
+    _spawn_notice(argv)
+
+
+_notice_processes: list[subprocess.Popen] = []
+
+
+def _spawn_notice(argv: list[str], *, env: dict | None = None) -> None:
+    """A child's response must never block enforcement; bound open windows."""
+    _notice_processes[:] = [p for p in _notice_processes if p.poll() is None]
+    if len(_notice_processes) >= 4:
+        _notice_processes.pop(0).terminate()
+    _notice_processes.append(subprocess.Popen(
+        argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, env=env,
+    ))
 
 
 def _notify_toast(os_name: str, title: str, message: str) -> None:
@@ -533,7 +596,7 @@ def _notify_toast(os_name: str, title: str, message: str) -> None:
 
 def _notify_window(os_name: str, title: str, message: str) -> None:
     if os_name == "linux" and shutil.which("zenity"):
-        _run_desktop(["zenity", "--warning", "--title", title, "--text", message])
+        _run_desktop(["zenity", "--warning", "--timeout=30", "--title", title, "--text", message])
         return
     if os_name == "macos":
         _run_desktop(
@@ -542,7 +605,7 @@ def _notify_window(os_name: str, title: str, message: str) -> None:
                 "-e",
                 "on run argv",
                 "-e",
-                "display dialog (item 1 of argv) with title (item 2 of argv) buttons {\"OK\"} default button 1",
+                "display dialog (item 1 of argv) with title (item 2 of argv) buttons {\"OK\"} default button 1 giving up after 30",
                 "-e",
                 "end run",
                 "--",
@@ -553,8 +616,8 @@ def _notify_window(os_name: str, title: str, message: str) -> None:
         return
     if os_name == "windows":
         ps = (
-            "Add-Type -AssemblyName System.Windows.Forms; "
-            "[System.Windows.Forms.MessageBox]::Show($env:KC_MESSAGE, $env:KC_TITLE)"
+            "$shell = New-Object -ComObject WScript.Shell; "
+            "$shell.Popup($env:KC_MESSAGE, 30, $env:KC_TITLE, 48)"
         )
         _run_desktop(
             ["powershell", "-NoProfile", "-Command", ps],
@@ -565,13 +628,12 @@ def _notify_window(os_name: str, title: str, message: str) -> None:
 
 
 def _tk_message(title: str, message: str) -> None:
-    import tkinter as tk
-    from tkinter import messagebox
-
-    root = tk.Tk()
-    root.withdraw()
-    messagebox.showwarning(title, message)
-    root.destroy()
+    # A separate process keeps the modal Tk event loop out of the agent.
+    _run_desktop([sys.executable, "-c",
+        "import sys, tkinter as tk; from tkinter import messagebox; "
+        "r=tk.Tk(); r.withdraw(); r.after(30000, r.destroy); "
+        "messagebox.showwarning(sys.argv[1], sys.argv[2]); r.destroy()",
+        title, message])
 
 
 _MACOS_LOCK_SCREEN = (
