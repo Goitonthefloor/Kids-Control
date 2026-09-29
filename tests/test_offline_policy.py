@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import urllib.error
 
 from kidscontrol_agent.agent import LOCK_RETRY_SECONDS, _wait_until_next_sync, run_cycle, run_once
@@ -58,7 +59,8 @@ def test_offline_keeps_blocks_and_stops_quota_apps(tmp_path, monkeypatch):
     cached = load_cached_policy()
     assert cached["allow_session"] is True
     assert "commands" not in cached
-    assert (tmp_path / "policy.json").stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert (tmp_path / "policy.json").stat().st_mode & 0o777 == 0o600
 
 
 def test_sync_failure_enforces_fail_closed_policy(tmp_path, monkeypatch):
@@ -126,7 +128,7 @@ def test_successful_sync_persists_allow_and_skips_commands_in_the_cache(tmp_path
     code, denied, policy = run_cycle(cfg)
     assert code == 0
     assert denied is False
-    assert policy is None
+    assert policy == fresh
     cached = load_cached_policy()
     assert cached["allow_session"] is True
     assert "commands" not in cached

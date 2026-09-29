@@ -97,6 +97,11 @@ Drei Geheimnisse, die nicht dasselbe sind:
 
 Nach der Einrichtung nutzt der Agent nur noch den Geräte-Schlüssel in `client.env`. Weder Eltern-Passwort noch Client-Setup-Passwort noch der Kind-Code laufen im Alltag mit.
 
+Beim Setup wird außerdem das lokale Kinderkonto (`--account`) hinterlegt. Bei einer
+abgelehnten Policy sperrt der Systemdienst dieses Konto für neue Anmeldungen und
+beendet nach einer 30-Sekunden-Warnung nur dessen Sitzung. Eltern- und
+Administratorkonten werden nicht verändert.
+
 ### 3. Kind und Client über eine Adresse
 
 1. Anmelden und nur den Namen des Kindes eintragen.
@@ -114,7 +119,7 @@ Das Skript installiert Python 3, falls es fehlt, lädt den Agenten vom Hub und r
 Wer den Agenten schon im Ordner `client` hat, startet denselben Schritt als Administrator:
 
 ```bash
-sudo python3 -m kidscontrol_agent.setup --server http://IP-DES-SERVERS:8000 --token CODE
+sudo python3 -m kidscontrol_agent.setup --server http://IP-DES-SERVERS:8000 --token CODE --account KINDERKONTO
 ```
 
 ## Dokumentation
@@ -226,6 +231,10 @@ Three secrets that are not the same thing:
 
 After enrollment the agent only uses the device key in `client.env`. Neither the parent password, nor the client setup password, nor the child code is used in daily operation.
 
+Setup also records the local child account (`--account`). When the policy denies
+access, the system service disables new logins for that account and ends only its
+session after a 30-second warning. Parent and administrator accounts are untouched.
+
 ### 3. Child and client from one address
 
 1. Sign in and enter only the child's name.
@@ -243,7 +252,7 @@ The script installs Python 3 when it is missing, downloads the agent from the hu
 If the agent is already in the `client` folder, start the same step as administrator:
 
 ```bash
-sudo python3 -m kidscontrol_agent.setup --server http://SERVER-IP:8000 --token CODE
+sudo python3 -m kidscontrol_agent.setup --server http://SERVER-IP:8000 --token CODE --account CHILD_ACCOUNT
 ```
 
 ## Documentation

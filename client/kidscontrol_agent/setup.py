@@ -115,12 +115,13 @@ def enroll(
     return _post(server, "/api/v1/setup/enroll", payload)
 
 
-def write_client_env(path: Path, *, server: str, device_key: str, poll_seconds: int = 30) -> None:
+def write_client_env(path: Path, *, server: str, device_key: str, poll_seconds: int = 30, account: str = "") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     text = (
         f"KIDSCONTROL_SERVER={server.rstrip('/')}\n"
         f"KIDSCONTROL_DEVICE_KEY={device_key}\n"
         f"KIDSCONTROL_POLL_SECONDS={int(poll_seconds)}\n"
+        f"KIDSCONTROL_ACCOUNT={account}\n"
     )
     path.write_text(text, encoding="utf-8")
     try:
@@ -158,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--token", default="", help="Einrichtungscode von der Kind-Seite")
     parser.add_argument("--ticket", default="", help="Einrichtungsauftrag aus der Browser-Maske")
     parser.add_argument("--device-name", default="")
+    parser.add_argument("--account", default="", help="Lokaler Anmeldename des Kinderkontos (kein Administrator)")
     parser.add_argument("--out", default="", help="Pfad für client.env")
     parser.add_argument("--skip-packages", action="store_true")
     args = parser.parse_args(argv)
@@ -181,6 +183,18 @@ def main(argv: list[str] | None = None) -> int:
             "Nicht-interaktiv: --server und --token (oder --setup-password und --child) sind nötig.",
             file=sys.stderr,
         )
+        return 2
+    args.account = args.account or os.environ.get("KIDSCONTROL_ACCOUNT", "").strip()
+    if not args.account and sys.stdin.isatty():
+        args.account = input("Lokaler Anmeldename des Kindes (nicht das Elternkonto): ").strip()
+    if not args.account:
+        print("--account mit dem lokalen Kinderkonto ist erforderlich.", file=sys.stderr)
+        return 2
+    from kidscontrol_agent.account import inspect_account
+    try:
+        inspect_account(args.account)
+    except (ValueError, KeyError, OSError, RuntimeError) as exc:
+        print(f"Kinderkonto nicht geeignet: {exc}", file=sys.stderr)
         return 2
     if not args.device_name:
         args.device_name = hostname() or "PC"
@@ -225,6 +239,7 @@ def main(argv: list[str] | None = None) -> int:
         server=args.server,
         device_key=result["device_key"],
         poll_seconds=int(result.get("poll_interval_seconds") or 30),
+        account=args.account,
     )
     child = (result.get("child") or {}).get("display_name") or args.child
     print(f"Gerät für {child} eingerichtet.")

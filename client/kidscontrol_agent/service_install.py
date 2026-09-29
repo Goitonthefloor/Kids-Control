@@ -5,6 +5,9 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import shutil
+import json
+from xml.sax.saxutils import escape
 from pathlib import Path
 
 ADMIN_NOTICE = (
@@ -31,6 +34,8 @@ def package_root() -> Path:
 
 
 def render_systemd_unit(*, python: str, install_dir: Path, env_file: Path) -> str:
+    def quote(value):
+        return json.dumps(str(value).replace("%", "%%"), ensure_ascii=False)
     return f"""[Unit]
 Description=KidsControl Client Agent
 After=network-online.target
@@ -40,10 +45,10 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
-WorkingDirectory={install_dir}
-Environment=PYTHONPATH={install_dir}
-EnvironmentFile=-{env_file}
-ExecStart={python} -m kidscontrol_agent --env {env_file}
+WorkingDirectory={quote(install_dir)}
+Environment={quote('PYTHONPATH=' + str(install_dir))}
+EnvironmentFile=-{quote(env_file)}
+ExecStart={quote(python)} -m kidscontrol_agent --env {quote(env_file)}
 Restart=always
 RestartSec=5
 
@@ -53,6 +58,7 @@ WantedBy=multi-user.target
 
 
 def render_launchd_plist(*, python: str, install_dir: Path, env_file: Path) -> str:
+    python, install_dir, env_file = (escape(str(value)) for value in (python, install_dir, env_file))
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -90,6 +96,7 @@ def render_launchd_plist(*, python: str, install_dir: Path, env_file: Path) -> s
 def render_windows_runner(*, python: str, install_dir: Path, env_file: Path) -> str:
     return (
         "@echo off\r\n"
+        "chcp 65001 >nul\r\n"
         f"set PYTHONPATH={install_dir}\r\n"
         ":kidscontrol_loop\r\n"
         f"\"{python}\" -m kidscontrol_agent --env \"{env_file}\"\r\n"
@@ -104,23 +111,80 @@ def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
 
 def _lock_unix(install_dir: Path, env_file: Path) -> None:
     env_file.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(env_file.parent, 0o700)
-        if env_file.is_file():
-            os.chmod(env_file, 0o600)
-    except OSError:
-        pass
+    os.chown(env_file.parent, 0, 0)
+    os.chmod(env_file.parent, 0o700)
     if install_dir.is_dir():
+        if any(p.is_symlink() for p in install_dir.rglob("*")):
+            raise PermissionError("Symlinks im Dienstverzeichnis sind nicht erlaubt")
         for dirpath, _dirnames, filenames in os.walk(install_dir):
-            try:
-                os.chmod(dirpath, 0o755)
-            except OSError:
-                continue
+            os.chown(dirpath, 0, 0)
+            os.chmod(dirpath, 0o755)
             for name in filenames:
-                try:
-                    os.chmod(Path(dirpath) / name, 0o644)
-                except OSError:
-                    continue
+                path = Path(dirpath) / name
+                if path.is_symlink():
+                    raise PermissionError(f"Symlink im Dienstverzeichnis: {path}")
+                os.chown(path, 0, 0)
+                os.chmod(path, 0o644)
+    # Apply last: an env file inside install_dir must not become world-readable.
+    if env_file.is_file():
+        os.chown(env_file, 0, 0)
+        os.chmod(env_file, 0o600)
+
+
+def _trusted_unix_path(path: Path) -> None:
+    """Reject writable owners/ancestors, including a user-owned interpreter."""
+    if path.is_symlink():
+        raise PermissionError(f"Unsicherer symbolischer Pfad: {path}")
+    for part in (path, *path.parents):
+        if not part.exists():
+            continue
+        info = part.stat()
+        if info.st_uid != 0 or info.st_mode & 0o022:
+            raise PermissionError(f"Dienstpfad muss root gehören und geschützt sein: {part}")
+
+
+def service_paths() -> tuple[Path, Path]:
+    windows = sys.platform == "win32"
+    root = (Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "KidsControl"
+            if windows else Path("/opt/kidscontrol-client"))
+    target_env = root / "client.env" if windows else Path("/etc/kidscontrol/client.env")
+    return root, target_env
+
+
+def _prepare_install(source: Path, env_file: Path, python: str) -> tuple[Path, Path]:
+    """Copy code out of the download/child account before registering a service."""
+    windows = sys.platform == "win32"
+    root, target_env = service_paths()
+    if not windows:
+        _trusted_unix_path(root)
+        _trusted_unix_path(target_env)
+        _trusted_unix_path(Path(python).resolve())
+    else:
+        executable = Path(python).resolve()
+        system_roots = [Path(os.environ[k]).resolve() for k in ("ProgramFiles", "ProgramFiles(x86)", "SystemRoot") if os.environ.get(k)]
+        if not any(executable.is_relative_to(base) for base in system_roots):
+            raise PermissionError("Python für alle Benutzer unter Programme installieren; kein Interpreter im Benutzerprofil")
+    root.mkdir(parents=True, exist_ok=True)
+    if not windows:
+        _lock_unix(root, target_env)
+    package = source / "kidscontrol_agent"
+    if any(p.is_symlink() for p in package.rglob("*")) or package.is_symlink():
+        raise PermissionError("Agent-Paket darf keine Symlinks enthalten")
+    if source.resolve() != root.resolve():
+        shutil.copytree(package, root / "kidscontrol_agent", dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    target_env.parent.mkdir(parents=True, exist_ok=True)
+    if env_file.resolve() != target_env.resolve():
+        shutil.copyfile(env_file, target_env)
+    if windows:
+        for args in (["/reset", "/T"], ["/inheritance:r", "/grant:r",
+                     "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "/T"]):
+            result = _run(["icacls", str(root), *args])
+            if result.returncode:
+                raise PermissionError("Dienstverzeichnis konnte nicht geschützt werden")
+    else:
+        _lock_unix(root, target_env)
+    return root, target_env
 
 
 def windows_task_argv(runner: Path) -> list[str]:
@@ -140,6 +204,7 @@ def install_system_service(env_file: Path, *, python: str | None = None, install
         raise PermissionError("system service requires administrator rights")
     root = install_dir or package_root()
     executable = python or sys.executable
+    root, env_file = _prepare_install(root, env_file, executable)
     system = sys.platform
     if system.startswith("linux"):
         unit = Path("/etc/systemd/system/kidscontrol-agent.service")
@@ -170,8 +235,7 @@ def install_system_service(env_file: Path, *, python: str | None = None, install
     if system == "win32":
         root.mkdir(parents=True, exist_ok=True)
         runner = root / "run-agent.cmd"
-        runner.write_bytes(render_windows_runner(python=executable, install_dir=root, env_file=env_file).encode("ascii", errors="replace"))
-        _run(["icacls", str(root), "/inheritance:r", "/grant:r", "SYSTEM:(OI)(CI)F", "Administrators:(OI)(CI)F"])
+        runner.write_bytes(render_windows_runner(python=executable, install_dir=root, env_file=env_file).encode("utf-8"))
         started = _run(windows_task_argv(runner))
         if started.returncode != 0:
             detail = (started.stderr or started.stdout or "").strip()

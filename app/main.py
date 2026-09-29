@@ -1807,7 +1807,7 @@ async def agent_sync(request: Request):
         inventory = body.get("inventory") or []
         if isinstance(inventory, list):
             _store_inventory(db, device, inventory)
-        tick_running_apps(db, child, body.get("running_apps") or [])
+        tick_running_apps(db, child, body.get("running_apps") or [], device_id=device.id)
         if "pending_updates" in body and isinstance(body.get("pending_updates"), list):
             _store_pending_updates(db, device, body["pending_updates"])
 

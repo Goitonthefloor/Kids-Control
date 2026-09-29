@@ -155,6 +155,28 @@ class AppUsage(Base):
     )
 
 
+class DeviceAppClock(Base):
+    """Independent heartbeat clocks; an idle PC must not reset another PC's usage."""
+
+    __tablename__ = "device_app_clocks"
+    device_id = Column(Integer, ForeignKey("devices.id", ondelete="CASCADE"), primary_key=True)
+    rule_id = Column(Integer, ForeignKey("app_rules.id", ondelete="CASCADE"), primary_key=True)
+    day = Column(String, primary_key=True)
+    last_seen_at = Column(DateTime(timezone=True), nullable=False)
+    running = Column(Boolean, nullable=False, default=False)
+
+
+class AppUsageSpan(Base):
+    """Recent charged intervals, merged to count overlapping devices once."""
+
+    __tablename__ = "app_usage_spans"
+    id = Column(Integer, primary_key=True)
+    rule_id = Column(Integer, ForeignKey("app_rules.id", ondelete="CASCADE"), nullable=False, index=True)
+    day = Column(String, nullable=False)
+    start_at = Column(DateTime(timezone=True), nullable=False)
+    end_at = Column(DateTime(timezone=True), nullable=False)
+
+
 class Override(Base):
     __tablename__ = "overrides"
 

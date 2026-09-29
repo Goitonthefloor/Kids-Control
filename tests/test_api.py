@@ -850,7 +850,10 @@ def test_child_card_blocks_programs_and_stores_quotas(client):
     try:
         usage = db.query(AppUsage).filter_by(rule_id=rule_id, day=day).one()
         assert usage.used_minutes == 0
-        usage.last_seen_at = datetime.now(timezone.utc) - timedelta(seconds=90)
+        from app.db import DeviceAppClock
+        clock = db.query(DeviceAppClock).filter_by(rule_id=rule_id).one()
+        clock.last_seen_at = datetime.now(timezone.utc) - timedelta(seconds=90)
+        usage.last_seen_at = clock.last_seen_at
         db.commit()
     finally:
         db.close()

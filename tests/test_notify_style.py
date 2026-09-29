@@ -1,6 +1,7 @@
 """Warning style: message window or toast, chosen from the client settings menu."""
 
 import os
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -30,9 +31,9 @@ def test_normalize_and_platform_default(monkeypatch):
     assert normalize_style(" Meldungsfenster ") == "window"
     assert normalize_style("hinweis") == "toast"
     assert normalize_style("nope") is None
-    monkeypatch.setattr(notify_style.os, "name", "nt")
+    monkeypatch.setattr(notify_style, "os", SimpleNamespace(name="nt"))
     assert default_style() == "window"
-    monkeypatch.setattr(notify_style.os, "name", "posix")
+    monkeypatch.setattr(notify_style, "os", SimpleNamespace(name="posix"))
     assert default_style() == "toast"
 
 
@@ -51,14 +52,13 @@ def test_invalid_or_unreadable_file_uses_default(tmp_path, monkeypatch):
     path.write_text("banana\n", encoding="utf-8")
     monkeypatch.delenv("KIDSCONTROL_NOTIFY_STYLE", raising=False)
     monkeypatch.setattr(notify_style, "style_candidates", lambda: [path])
-    monkeypatch.setattr(notify_style.os, "name", "posix")
+    monkeypatch.setattr(notify_style, "default_style", lambda: "toast")
     assert load_notify_style() == "toast"
     path.write_text("window\n", encoding="utf-8")
-    path.chmod(0)
-    try:
-        assert load_notify_style() == "toast"
-    finally:
-        path.chmod(0o600)
+    def denied(*args, **kwargs):
+        raise PermissionError("unreadable")
+    monkeypatch.setattr(Path, "read_text", denied)
+    assert load_notify_style() == "toast"
 
 
 def test_save_roundtrip_beside_active_env(tmp_path, monkeypatch):
@@ -143,7 +143,7 @@ def test_notify_picks_window_or_toast(monkeypatch):
     def fake_run(argv, **kwargs):
         calls.append(list(argv))
 
-    monkeypatch.setattr("kidscontrol_agent.enforce.subprocess.run", fake_run)
+    monkeypatch.setattr("kidscontrol_agent.enforce._spawn_notice", fake_run)
     monkeypatch.setattr("kidscontrol_agent.enforce.detect_os", lambda: "linux")
     monkeypatch.setattr(
         "kidscontrol_agent.enforce.shutil.which",
@@ -158,7 +158,7 @@ def test_notify_picks_window_or_toast(monkeypatch):
     notify("Titel", "Text", style="window")
     notify("Titel", "Text", style="toast")
     assert calls[2][0] == "powershell"
-    assert "MessageBox" in calls[2][3]
+    assert "Popup" in calls[2][3]
     assert "ShowBalloonTip" in calls[3][3]
 
     monkeypatch.setattr("kidscontrol_agent.enforce.detect_os", lambda: "macos")

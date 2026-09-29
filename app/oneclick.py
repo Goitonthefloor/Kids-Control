@@ -95,9 +95,11 @@ if [[ -t 0 ]]; then
   read -r -p "Enter drücken, um die Installation fortzusetzen... " _
 fi
 if [[ "$(id -u)" -ne 0 ]]; then
+  export KIDSCONTROL_ACCOUNT="$SUDO_USER"
   echo "KidsControl wird als Systemdienst installiert und braucht Administratorrechte."
   exec sudo bash "$0" "$@"
 fi
+export KIDSCONTROL_ACCOUNT="$SUDO_USER"
 notice
 SERVER="{server}"
 TOKEN="{token}"
@@ -122,7 +124,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 curl -fsSL "$SERVER/setup/agent.tgz" | tar -xz -C "$INSTALL_DIR"
 export PYTHONPATH="$INSTALL_DIR"
-python3 -m kidscontrol_agent.setup --server "$SERVER" --token "$TOKEN" --out "$OUT"
+python3 -m kidscontrol_agent.setup --server "$SERVER" --token "$TOKEN" --account "$KIDSCONTROL_ACCOUNT" --out "$OUT"
 echo "KidsControl läuft als Systemdienst (root), nicht unter dem Kinderkonto."
 notice
 """
@@ -141,6 +143,7 @@ echo.
 pause
 net session >nul 2>&1
 if errorlevel 1 (
+  set KIDSCONTROL_ACCOUNT=%USERNAME%
   echo KidsControl wird als SYSTEM-Dienst installiert und braucht Administratorrechte.
   powershell -NoProfile -Command "Start-Process -FilePath cmd -ArgumentList '/c \"\"%~f0\"\"' -Verb RunAs"
   exit /b
@@ -169,7 +172,7 @@ if errorlevel 1 (
   exit /b 1
 )
 set PYTHONPATH=%INSTALL%
-%PY% -m kidscontrol_agent.setup --server %SERVER% --token %TOKEN% --out "%INSTALL%\\client.env"
+%PY% -m kidscontrol_agent.setup --server %SERVER% --token %TOKEN% --account "%KIDSCONTROL_ACCOUNT%" --out "%INSTALL%\\client.env"
 echo KidsControl laeuft als SYSTEM, nicht unter dem Kinderkonto.
 echo.
 echo ============================================================
@@ -217,9 +220,11 @@ notice() {{
 }}
 notice
 if [[ "$(id -u)" -ne 0 ]]; then
+  export KIDSCONTROL_ACCOUNT="$SUDO_USER"
   echo "KidsControl wird als Systemdienst installiert und braucht Administratorrechte."
   exec sudo bash "$0" "$@"
 fi
+export KIDSCONTROL_ACCOUNT="$SUDO_USER"
 say installer_opened
 SERVER="{server}"
 TICKET="{ticket}"
@@ -247,7 +252,7 @@ say python_ok
 curl -fsSL "$SERVER/setup/agent.tgz" | tar -xz -C "$INSTALL_DIR"
 say agent_downloaded
 export PYTHONPATH="$INSTALL_DIR"
-python3 -m kidscontrol_agent.setup --server "$SERVER" --ticket "$TICKET" --out "$OUT"
+python3 -m kidscontrol_agent.setup --server "$SERVER" --ticket "$TICKET" --account "$KIDSCONTROL_ACCOUNT" --out "$OUT"
 echo "KidsControl läuft als Systemdienst (root), nicht unter dem Kinderkonto."
 notice
 """
@@ -265,6 +270,7 @@ echo ============================================================
 echo.
 net session >nul 2>&1
 if errorlevel 1 (
+  set KIDSCONTROL_ACCOUNT=%USERNAME%
   echo KidsControl wird als SYSTEM-Dienst installiert und braucht Administratorrechte.
   powershell -NoProfile -Command "Start-Process -FilePath cmd -ArgumentList '/c \"\"%~f0\"\"' -Verb RunAs"
   exit /b
@@ -293,7 +299,7 @@ if errorlevel 1 (
 )
 call :report agent_downloaded
 set PYTHONPATH=%INSTALL%
-%PY% -m kidscontrol_agent.setup --server %SERVER% --ticket %TICKET% --out "%INSTALL%\\client.env"
+%PY% -m kidscontrol_agent.setup --server %SERVER% --ticket %TICKET% --account "%KIDSCONTROL_ACCOUNT%" --out "%INSTALL%\\client.env"
 if errorlevel 1 (
   call :report failed
   pause

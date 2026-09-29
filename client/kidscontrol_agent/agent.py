@@ -7,6 +7,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 from kidscontrol_agent.config import load_config
 from kidscontrol_agent.enforce import (
@@ -18,6 +20,7 @@ from kidscontrol_agent.enforce import (
     notify,
     running_rule_ids,
     user_session_active,
+    configure_target,
 )
 from kidscontrol_agent.inventory import (
     cached_pending_updates,
@@ -36,16 +39,18 @@ from kidscontrol_agent.quota_warn import warn_running_quotas
 # While the hub says the session is denied, lock again on this cadence.
 # The poll interval stays longer; this only shortens the unlocked gap.
 LOCK_RETRY_SECONDS = 5
+APP_CLOSE_WARNING_SECONDS = 30
+_app_deadlines: dict[str, float] = {}
+_inventory: list[dict] = []
 
 
 def sync(server: str, device_key: str, *, active: bool = True) -> dict:
     url = f"{server}/api/v1/agent/sync"
-    watches = load_cached_watches()
     body = {
         "active": active,
         "hostname": hostname(),
         "os": detect_os(),
-        "inventory": query_versions(watches) if watches else [],
+        "inventory": list(_inventory),
         "running_apps": running_rule_ids(load_cached_quota()),
     }
     pending = cached_pending_updates()
@@ -66,23 +71,35 @@ def sync(server: str, device_key: str, *, active: bool = True) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def enforce_policy(policy: dict, *, dry_run: bool = False, announce: bool = True) -> None:
+def enforce_policy(policy: dict, *, dry_run: bool = False, announce: bool = True, account_gate=None) -> None:
     allow = bool(policy.get("allow_session"))
     reason = policy.get("reason_label") or policy.get("reason") or ""
     actions = policy.get("actions") or {}
 
-    if not allow and actions.get("lock_session_when_denied", True):
+    if account_gate is not None:
+        account_gate.enforce(allow, dry_run=dry_run)
+    elif not allow and actions.get("lock_session_when_denied", True):
+        lock_session(dry_run=dry_run)
         if announce:
             notify("KidsControl", f"Zeit abgelaufen: {reason}", dry_run=dry_run)
-        lock_session(dry_run=dry_run)
 
     if actions.get("kill_blocked_apps", True):
         rules = policy.get("blocked_apps") or []
+        live_labels = {r.get("label") or r.get("pattern") or "" for r in rules}
+        for label in list(_app_deadlines):
+            if label not in live_labels:
+                _app_deadlines.pop(label)
         if rules:
             for pid, name, label in find_matching_pids(rules):
+                # Keep the deadline across process restarts. Reopening the app
+                # cannot repeatedly buy another warning period.
+                if label not in _app_deadlines:
+                    _app_deadlines[label] = time.monotonic() + APP_CLOSE_WARNING_SECONDS
+                    notify("KidsControl", f"{label or name} wird in 30 Sekunden geschlossen. Bitte jetzt speichern.", dry_run=dry_run)
+                if time.monotonic() < _app_deadlines[label]:
+                    continue
                 print(f"[block] killing pid={pid} name={name} rule={label}")
                 kill_pid(pid, dry_run=dry_run)
-                notify("KidsControl", f"App gesperrt: {label or name}", dry_run=dry_run)
 
     if allow and policy.get("warn"):
         rem = policy.get("remaining_minutes")
@@ -146,7 +163,7 @@ def _apply_offline(cfg: dict) -> tuple[int, bool, dict]:
     return 1, True, policy
 
 
-def run_cycle(cfg: dict) -> tuple[int, bool, dict | None]:
+def run_cycle(cfg: dict, *, apply: bool = True) -> tuple[int, bool, dict | None]:
     """One poll. Returns (exit code, session denied, policy to keep enforcing)."""
     if not cfg["device_key"]:
         print("Fehler: KIDSCONTROL_DEVICE_KEY fehlt.", file=sys.stderr)
@@ -159,20 +176,23 @@ def run_cycle(cfg: dict) -> tuple[int, bool, dict | None]:
         except Exception:
             detail = ""
         print(f"HTTP-Fehler {exc.code}: {detail}", file=sys.stderr)
-        return _apply_offline(cfg)
+        if apply:
+            return _apply_offline(cfg)
+        return 1, True, offline_policy()
     except Exception as exc:
         print(f"Sync fehlgeschlagen: {exc}", file=sys.stderr)
-        return _apply_offline(cfg)
+        if apply:
+            return _apply_offline(cfg)
+        return 1, True, offline_policy()
 
     save_cached_policy(policy)
     _describe(policy)
     save_cached_quota(policy.get("quota_apps") or [])
-    warn_running_quotas(policy.get("quota_apps") or [], dry_run=cfg["dry_run"])
-    enforce_policy(policy, dry_run=cfg["dry_run"])
-    handle_commands(cfg, policy)
-    refresh_pending_updates()
+    if apply:
+        warn_running_quotas(policy.get("quota_apps") or [], dry_run=cfg["dry_run"])
+        enforce_policy(policy, dry_run=cfg["dry_run"])
     denied = not bool(policy.get("allow_session"))
-    return 0, denied, policy if denied else None
+    return 0, denied, policy
 
 
 def run_once(cfg: dict) -> int:
@@ -204,20 +224,115 @@ def _wait_until_next_sync(
 
 def run_loop(cfg: dict) -> int:
     print(f"KidsControl Agent startet → {cfg['server']} (OS={detect_os()}, dry_run={cfg['dry_run']})")
-    while True:
-        code, denied, policy = run_cycle(cfg)
-        # Missing device key is a local config error; back off longer.
-        sleep_for = cfg["poll_seconds"] if code != 2 else 60
-        try:
-            _wait_until_next_sync(
-                sleep_for,
-                policy=policy,
-                session_denied=denied,
+    if not cfg["device_key"]:
+        return 2
+    gate = ManagedSession(cfg)
+    # Neither HTTP timeouts nor package managers run on the enforcement thread.
+    poller = ThreadPoolExecutor(max_workers=1, thread_name_prefix="policy")
+    maintenance = ThreadPoolExecutor(max_workers=1, thread_name_prefix="updates")
+    worker = Maintenance()
+    fetch = poller.submit(run_cycle, cfg, apply=False)
+    update = None
+    current = offline_policy()
+    next_poll = time.monotonic()
+    fresh_at = None
+    try:
+        while True:
+            now = time.monotonic()
+            if fetch is not None and fetch.done():
+                try:
+                    code, _denied, policy = fetch.result()
+                    current = policy or offline_policy()
+                    fresh_at = now if code == 0 else None
+                    warn_running_quotas(current.get("quota_apps") or [], dry_run=cfg["dry_run"])
+                except Exception as exc:
+                    print(f"Policy fehlgeschlagen: {exc}", file=sys.stderr)
+                    current, fresh_at = offline_policy(), None
+                fetch = None
+                next_poll = now + cfg["poll_seconds"]
+            if fresh_at is not None and now - fresh_at > cfg["poll_seconds"] + 20:
+                current, fresh_at = offline_policy(), None
+            if fetch is None and now >= next_poll:
+                fetch = poller.submit(run_cycle, cfg, apply=False)
+            if fresh_at is not None and (update is None or update.done()):
+                if update is not None:
+                    try:
+                        update.result()
+                    except Exception as exc:
+                        print(f"Wartung fehlgeschlagen: {exc}", file=sys.stderr)
+                update = maintenance.submit(worker.run, cfg, current)
+            try:
+                enforce_policy(current, dry_run=cfg["dry_run"], announce=False, account_gate=gate)
+            except Exception as exc:
+                print(f"Durchsetzung fehlgeschlagen: {exc}", file=sys.stderr)
+            time.sleep(1)
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        poller.shutdown(wait=False, cancel_futures=True)
+        maintenance.shutdown(wait=False, cancel_futures=True)
+
+
+class ManagedSession:
+    """Block authentication immediately; warn before ending the child's session."""
+
+    def __init__(self, cfg):
+        from kidscontrol_agent.account import AccountGate
+        if not cfg.get("account"):
+            raise ValueError("Kinderkonto fehlt. Einrichtung erneut mit --account ANMELDENAME ausführen.")
+        self.gate = AccountGate(cfg["account"], Path(cfg["account_journal"]))
+        configure_target(cfg["account"], self.gate.identity)
+        self.deadline = None
+        self.next_check = 0.0
+
+    def enforce(self, allow: bool, *, dry_run: bool):
+        now = time.monotonic()
+        if allow:
+            if self.deadline is not None or self.gate.journal.exists():
+                self.gate.apply(False, dry_run=dry_run)
+            self.deadline = None
+            self.next_check = 0.0
+            return
+        if self.deadline is None:
+            self.deadline = now + APP_CLOSE_WARNING_SECONDS
+            notify("KidsControl", "Deine Sitzung endet in 30 Sekunden. Bitte speichern. Eine neue Anmeldung ist bis zur Freigabe gesperrt.", dry_run=dry_run)
+        if now >= self.next_check:
+            self.gate.apply(True, terminate=now >= self.deadline, dry_run=dry_run)
+            self.next_check = now + 5
+
+
+class Maintenance:
+    """One serial update worker, with retryable result delivery and inventory."""
+
+    def __init__(self):
+        self.results: dict[int, tuple[str, str]] = {}
+        self.reported: set[int] = set()
+        self.next_inventory = 0.0
+
+    def run(self, cfg: dict, policy: dict) -> None:
+        global _inventory
+        watches = policy.get("watch_packages") or []
+        save_cached_watches([str(x) for x in watches])
+        for command in policy.get("commands") or []:
+            cid = int(command["id"])
+            if cid in self.results or cid in self.reported:
+                continue
+            if command.get("kind") not in {"update_one", "update_all"}:
+                continue
+            # Do not execute until the hub has acknowledged ownership.
+            report_command(cfg["server"], cfg["device_key"], cid, "running", "")
+            self.results[cid] = run_update(
+                command.get("package_name") if command["kind"] == "update_one" else None,
                 dry_run=cfg["dry_run"],
             )
-        except KeyboardInterrupt:
-            print("Beendet.")
-            return 0
+        for cid, (status, output) in list(self.results.items()):
+            report_command(cfg["server"], cfg["device_key"], cid, status, output)
+            self.reported.add(cid)
+            del self.results[cid]
+        if time.monotonic() >= self.next_inventory:
+            _inventory = query_versions(watches) if watches else []
+            refresh_pending_updates()
+            self.next_inventory = time.monotonic() + 60
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -235,8 +350,19 @@ def main(argv: list[str] | None = None) -> int:
 
         return open_settings()
     cfg = load_config(env_path)
+    if "--restore-account" in argv:
+        from kidscontrol_agent.account import AccountGate
+        from kidscontrol_agent.service_install import is_privileged
+        if not is_privileged():
+            raise PermissionError("Kontofreigabe erfordert Administratorrechte")
+        AccountGate(cfg["account"], Path(cfg["account_journal"])).apply(False)
+        return 0
     if once:
-        return run_once(cfg)
+        gate = ManagedSession(cfg)
+        code, _denied, policy = run_cycle(cfg, apply=False)
+        if policy:
+            enforce_policy(policy, dry_run=cfg["dry_run"], account_gate=gate)
+        return code
     return run_loop(cfg)
 
 

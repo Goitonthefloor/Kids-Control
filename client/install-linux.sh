@@ -9,6 +9,7 @@ echo "Das Kinderkonto darf kein Administrator sein. Mit sudo oder Windows-Adminr
 echo "============================================================"
 echo
 if [[ $EUID -ne 0 ]]; then
+  export KIDSCONTROL_ACCOUNT="${SUDO_USER:-${USER:-}}"
   echo "Bitte mit sudo/root ausführen."
   exit 1
 fi
@@ -25,5 +26,5 @@ chmod 755 "$INSTALL_DIR"
 chmod 700 "$CONF_DIR"
 echo "Agent installiert nach $INSTALL_DIR"
 echo "Einrichten startet den Systemdienst als root, nicht als Kinderkonto:"
-echo "  PYTHONPATH=$INSTALL_DIR python3 -m kidscontrol_agent.setup --out $CONF_DIR/client.env"
+echo "  PYTHONPATH=$INSTALL_DIR python3 -m kidscontrol_agent.setup --account $KIDSCONTROL_ACCOUNT --out $CONF_DIR/client.env"
 echo "Das Kinderkonto darf kein Administrator sein."
