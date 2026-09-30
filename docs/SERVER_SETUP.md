@@ -9,6 +9,8 @@ Siehe README, Abschnitt Systemvoraussetzungen.
 - Python 3.10+
 - Port 8000 (oder ein anderer freier TCP-Port) im Heimnetz erreichbar
 
+Für einen Dauerbetrieb sind auch Docker Compose und ein unprivilegierter Debian/Ubuntu-LXC möglich. Die vollständige Einschätzung, Persistenz-Hinweise und die Containerbefehle stehen in `docs/DEPLOYMENT.md`.
+
 ## Repo holen
 
 ```bash
