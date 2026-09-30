@@ -233,7 +233,10 @@ def run_loop(cfg: dict) -> int:
     worker = Maintenance()
     fetch = poller.submit(run_cycle, cfg, apply=False)
     update = None
-    current = offline_policy()
+    # "Not contacted yet" is not "hub unreachable". Applying the offline deny
+    # here disables the child account and starts the logoff warning on every
+    # service start, including when the hub is up and the schedule allows access.
+    current = None
     next_poll = time.monotonic()
     fresh_at = None
     try:
@@ -261,10 +264,11 @@ def run_loop(cfg: dict) -> int:
                     except Exception as exc:
                         print(f"Wartung fehlgeschlagen: {exc}", file=sys.stderr)
                 update = maintenance.submit(worker.run, cfg, current)
-            try:
-                enforce_policy(current, dry_run=cfg["dry_run"], announce=False, account_gate=gate)
-            except Exception as exc:
-                print(f"Durchsetzung fehlgeschlagen: {exc}", file=sys.stderr)
+            if current is not None:
+                try:
+                    enforce_policy(current, dry_run=cfg["dry_run"], announce=False, account_gate=gate)
+                except Exception as exc:
+                    print(f"Durchsetzung fehlgeschlagen: {exc}", file=sys.stderr)
             time.sleep(1)
     except KeyboardInterrupt:
         return 0

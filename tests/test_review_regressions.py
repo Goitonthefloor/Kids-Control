@@ -1,4 +1,6 @@
 """Regressions from the initial review; no real desktop/account mutations."""
+import os
+import subprocess
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from threading import Event
@@ -10,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app import policy
 from app.db import Base, Child, AppRule, AppUsage
+from app.oneclick import _linux_script, _linux_ticket_script, _windows_script, _windows_ticket_script
 from kidscontrol_agent import agent, enforce
 
 
@@ -115,6 +118,127 @@ def test_posix_only_child_processes(monkeypatch):
     monkeypatch.setattr(enforce.subprocess, "check_output", lambda *a, **k:
                         "10 1000 game\n11 1001 game\n12 0 systemd\n")
     assert [p.pid for p in enforce._list_posix()] == [11]
+
+
+def _linux_installer_reaches_sudo_when_sudo_user_unset(script: str, tmp_path):
+    """The child runs the installer directly. SUDO_USER does not exist until sudo."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    marker = tmp_path / "sudo-called"
+    sudo = bindir / "sudo"
+    sudo.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > " + repr(str(marker)) + "\nexit 0\n", encoding="utf-8")
+    sudo.chmod(0o755)
+    path = tmp_path / "setup.sh"
+    path.write_text(script, encoding="utf-8")
+    env = os.environ.copy()
+    env.pop("SUDO_USER", None)
+    env["PATH"] = str(bindir) + os.pathsep + env.get("PATH", "")
+    result = subprocess.run(["bash", str(path)], env=env, capture_output=True, text=True, timeout=10)
+    assert "unbound variable" not in result.stderr
+    assert marker.is_file(), result.stderr
+    assert "bash" in marker.read_text(encoding="utf-8")
+
+
+def test_linux_oneclick_survives_unset_sudo_user(tmp_path):
+    script = _linux_script("http://127.0.0.1:8000", "token", systemd=True)
+    assert 'export KIDSCONTROL_ACCOUNT="${SUDO_USER:-}"' in script
+    assert 'export KIDSCONTROL_ACCOUNT="$SUDO_USER"' not in script
+    subprocess.run(["bash", "-n", "-c", script], check=True)
+    _linux_installer_reaches_sudo_when_sudo_user_unset(script, tmp_path)
+
+
+def test_linux_ticket_installer_survives_unset_sudo_user(tmp_path):
+    script = _linux_ticket_script("http://127.0.0.1:8000", "ticket", systemd=True)
+    assert 'export KIDSCONTROL_ACCOUNT="${SUDO_USER:-}"' in script
+    subprocess.run(["bash", "-n", "-c", script], check=True)
+    _linux_installer_reaches_sudo_when_sudo_user_unset(script, tmp_path)
+
+
+def test_windows_oneclick_forwards_child_account_across_uac():
+    """UAC starts a new process, so a variable set before RunAs never arrives."""
+    for script in (
+        _windows_script("http://127.0.0.1:8000", "token"),
+        _windows_ticket_script("http://127.0.0.1:8000", "ticket"),
+    ):
+        assert 'set "KIDSCONTROL_ACCOUNT=%~1"' in script
+        assert "$env:USERNAME" in script
+        assert "KIDSCONTROL_ACCOUNT=%USERNAME%" not in script.split("if errorlevel 1", 1)[1].split("exit /b", 1)[0]
+        assert '--account "%KIDSCONTROL_ACCOUNT%"' in script
+
+
+def test_restart_does_not_lock_before_hub_answers(monkeypatch):
+    started, release = Event(), Event()
+    enforced, waits = [], []
+
+    def cycle(cfg, *, apply=False):
+        started.set()
+        assert release.wait(3)
+        return 0, False, {
+            "allow_session": True,
+            "blocked_apps": [],
+            "quota_apps": [],
+            "actions": {"lock_session_when_denied": True, "kill_blocked_apps": True},
+        }
+
+    def enforce(policy, **kwargs):
+        enforced.append(bool(policy.get("allow_session")))
+        raise KeyboardInterrupt
+
+    def sleep(_seconds):
+        if not release.is_set():
+            waits.append(1)
+        if started.is_set():
+            release.set()
+
+    monkeypatch.setattr(agent, "run_cycle", cycle)
+    monkeypatch.setattr(agent, "enforce_policy", enforce)
+    monkeypatch.setattr(agent, "warn_running_quotas", lambda *a, **k: None)
+    monkeypatch.setattr(agent.Maintenance, "run", lambda self, cfg, policy: None)
+    monkeypatch.setattr(agent, "ManagedSession", lambda cfg: object())
+    monkeypatch.setattr(agent.time, "sleep", sleep)
+    code = agent.run_loop({
+        "server": "http://hub",
+        "device_key": "key",
+        "dry_run": False,
+        "poll_seconds": 30,
+    })
+    assert code == 0
+    assert waits, "the loop never waited for the first sync"
+    assert enforced == [True]
+
+
+def test_hub_failure_still_fails_closed_after_the_attempt(monkeypatch):
+    started, release = Event(), Event()
+    enforced = []
+
+    def cycle(cfg, *, apply=False):
+        started.set()
+        assert release.wait(3)
+        return 1, True, {
+            "allow_session": False,
+            "blocked_apps": [],
+            "quota_apps": [],
+            "actions": {"lock_session_when_denied": True},
+        }
+
+    def enforce(policy, **kwargs):
+        enforced.append(release.is_set() and not policy.get("allow_session"))
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(agent, "run_cycle", cycle)
+    monkeypatch.setattr(agent, "enforce_policy", enforce)
+    monkeypatch.setattr(agent, "warn_running_quotas", lambda *a, **k: None)
+    monkeypatch.setattr(agent.Maintenance, "run", lambda self, cfg, policy: None)
+    monkeypatch.setattr(agent, "ManagedSession", lambda cfg: object())
+    monkeypatch.setattr(agent.time, "sleep", lambda _s: release.set() if started.is_set() else None)
+    code = agent.run_loop({
+        "server": "http://hub",
+        "device_key": "key",
+        "dry_run": False,
+        "poll_seconds": 30,
+    })
+    assert code == 0
+    assert enforced == [True]
 
 
 def test_windows_only_local_child_processes(monkeypatch):
