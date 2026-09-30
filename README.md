@@ -28,12 +28,29 @@ Keine Inhaltsanalyse, kein Keylogging, keine Bildschirmüberwachung.
 |---|---|
 | Betriebssystem | Linux für den Dauerbetrieb (systemd). Windows 10/11 und macOS 12+ können den Hub ebenfalls starten. |
 | Python | 3.10 oder neuer, mit `pip` und `venv` |
-| Arbeitsspeicher | 256 MB frei reichen für einen Haushalt |
-| Speicherplatz | etwa 500 MB inklusive virtueller Umgebung und SQLite-Datenbank |
+| Arbeitsspeicher | 256 MB frei reichen für einen Haushalt; für Docker/LXC 512 MB Container-Limit einplanen |
+| Speicherplatz | etwa 500 MB inklusive virtueller Umgebung und SQLite-Datenbank; Container-Image zusätzlich etwa 150 MB |
 | Netzwerk | ein freier TCP-Port (Standard **8000**), von den Kinder-PCs im LAN erreichbar |
 | Browser | aktuelle Version von Firefox, Chrome, Edge oder Safari |
 
-Nicht nötig: Active Directory, Docker, dieselbe Distribution auf allen Rechnern.
+Docker und LXC sind optional. Der Hub benötigt keine privilegierten Container-Rechte. Active Directory und dieselbe Distribution auf allen Rechnern sind nicht nötig.
+
+### Docker oder LXC
+
+Für einen dauerhaft laufenden Host empfehlen wir Docker Compose oder einen unprivilegierten Debian/Ubuntu-LXC. Beide Varianten brauchen nur TCP-Port 8000 (oder den gewählten Host-Port) und ein persistentes Datenverzeichnis. Der Kinder-Agent bleibt auf den Kinder-PCs und braucht dort weiterhin die beschriebenen lokalen Rechte.
+
+Docker:
+
+```bash
+cp .env.docker.example .env.docker
+# In .env.docker beide Passwörter ersetzen (mindestens 8 Zeichen, verschieden)
+docker compose up -d --build
+docker compose logs -f kids-control
+```
+
+Die SQLite-Datenbank und `server.env` liegen im Volume `kids-control-data`. Für Backups genügt ein Backup dieses Volumes. `docker compose down` löscht das Volume nicht; `docker compose down -v` dagegen schon.
+
+LXC: Einen unprivilegierten Debian- oder Ubuntu-Container mit mindestens 1 vCPU, 512 MB RAM, 1 GB freiem Speicher und Netzwerkzugriff auf die Kinder-PCs anlegen. Im Container das Repo ablegen und als root `./deploy-lxc.sh` ausführen. Anschließend `python -m app.setup` als `kidscontrol` ausführen und den mitgelieferten systemd-Dienst aktivieren. Für LXC sind keine Device-Passthroughs, nesting oder zusätzlichen Capabilities erforderlich.
 
 ### Clients (Kinder-PCs)
 
@@ -128,6 +145,7 @@ sudo python3 -m kidscontrol_agent.setup --server http://IP-DES-SERVERS:8000 --to
 - `docs/DATABASE.md`
 - `docs/SERVER_SETUP.md`
 - `docs/CLIENT.md`
+- `docs/DEPLOYMENT.md` (Host-Schätzung, Docker und LXC)
 
 ## Lizenzierung
 
@@ -162,12 +180,29 @@ No content inspection, no keylogging, no screen surveillance.
 |---|---|
 | Operating system | Linux for an always-on hub (systemd). Windows 10/11 and macOS 12+ can run the hub as well. |
 | Python | 3.10 or newer, with `pip` and `venv` |
-| Memory | 256 MB free is enough for a household |
-| Disk | about 500 MB including the virtualenv and the SQLite database |
+| Memory | 256 MB free is enough for a household; reserve a 512 MB container limit for Docker/LXC |
+| Disk | about 500 MB including the virtualenv and SQLite; add about 150 MB for the container image |
 | Network | one free TCP port (default **8000**) reachable from the child PCs on the LAN |
 | Browser | a current Firefox, Chrome, Edge, or Safari |
 
-Not required: Active Directory, Docker, or the same distribution on every machine.
+Docker and LXC are optional. The hub does not need privileged container permissions. Active Directory and the same distribution on every machine are not required.
+
+### Docker or LXC
+
+For an always-on host, Docker Compose or an unprivileged Debian/Ubuntu LXC are suitable. Both need only TCP port 8000 (or the selected host port) and persistent data. The child agent remains on the child PCs and still needs its documented local privileges there.
+
+Docker:
+
+```bash
+cp .env.docker.example .env.docker
+# Replace both passwords in .env.docker (at least 8 characters, different)
+docker compose up -d --build
+docker compose logs -f kids-control
+```
+
+The SQLite database and `server.env` are stored in the `kids-control-data` volume. Back up that volume. `docker compose down` keeps the volume; `docker compose down -v` removes it.
+
+LXC: Create an unprivileged Debian or Ubuntu container with at least 1 vCPU, 512 MB RAM, 1 GB free disk, and network access to the child PCs. Put the repo in the container and run `./deploy-lxc.sh` as root. Then run `python -m app.setup` as `kidscontrol` and enable the supplied systemd service. No device passthrough, nesting, or extra capabilities are required.
 
 ### Clients (child PCs)
 

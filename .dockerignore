@@ -1,0 +1,9 @@
+.git
+.venv
+.venv-review
+__pycache__
+.pytest_cache
+data
+*.pyc
+.env
+.env.docker

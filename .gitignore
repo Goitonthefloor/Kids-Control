@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .env
+.env.docker
 data/server.env
 data/keys/
 data/*.sqlite3
