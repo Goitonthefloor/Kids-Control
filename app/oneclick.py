@@ -95,11 +95,11 @@ if [[ -t 0 ]]; then
   read -r -p "Enter drücken, um die Installation fortzusetzen... " _
 fi
 if [[ "$(id -u)" -ne 0 ]]; then
-  export KIDSCONTROL_ACCOUNT="$SUDO_USER"
   echo "KidsControl wird als Systemdienst installiert und braucht Administratorrechte."
   exec sudo bash "$0" "$@"
 fi
-export KIDSCONTROL_ACCOUNT="$SUDO_USER"
+# SUDO_USER exists only after sudo. Expanding it earlier aborts under set -u.
+export KIDSCONTROL_ACCOUNT="${{SUDO_USER:-}}"
 notice
 SERVER="{server}"
 TOKEN="{token}"
@@ -141,13 +141,14 @@ echo {ADMIN_NOTICE}
 echo ============================================================
 echo.
 pause
+if not "%~1"=="" set "KIDSCONTROL_ACCOUNT=%~1"
 net session >nul 2>&1
 if errorlevel 1 (
-  set KIDSCONTROL_ACCOUNT=%USERNAME%
   echo KidsControl wird als SYSTEM-Dienst installiert und braucht Administratorrechte.
-  powershell -NoProfile -Command "Start-Process -FilePath cmd -ArgumentList '/c \"\"%~f0\"\"' -Verb RunAs"
+  powershell -NoProfile -Command "$p=New-Object System.Diagnostics.ProcessStartInfo; $p.FileName='%~f0'; $p.Arguments='""'+$env:USERNAME+'""'; $p.Verb='RunAs'; $p.UseShellExecute=$true; [Diagnostics.Process]::Start($p)|Out-Null"
   exit /b
 )
+if not defined KIDSCONTROL_ACCOUNT set "KIDSCONTROL_ACCOUNT=%USERNAME%"
 echo.
 echo ============================================================
 echo HINWEIS
@@ -220,11 +221,11 @@ notice() {{
 }}
 notice
 if [[ "$(id -u)" -ne 0 ]]; then
-  export KIDSCONTROL_ACCOUNT="$SUDO_USER"
   echo "KidsControl wird als Systemdienst installiert und braucht Administratorrechte."
   exec sudo bash "$0" "$@"
 fi
-export KIDSCONTROL_ACCOUNT="$SUDO_USER"
+# SUDO_USER exists only after sudo. Expanding it earlier aborts under set -u.
+export KIDSCONTROL_ACCOUNT="${{SUDO_USER:-}}"
 say installer_opened
 SERVER="{server}"
 TICKET="{ticket}"
@@ -268,13 +269,14 @@ echo HINWEIS
 echo {ADMIN_NOTICE}
 echo ============================================================
 echo.
+if not "%~1"=="" set "KIDSCONTROL_ACCOUNT=%~1"
 net session >nul 2>&1
 if errorlevel 1 (
-  set KIDSCONTROL_ACCOUNT=%USERNAME%
   echo KidsControl wird als SYSTEM-Dienst installiert und braucht Administratorrechte.
-  powershell -NoProfile -Command "Start-Process -FilePath cmd -ArgumentList '/c \"\"%~f0\"\"' -Verb RunAs"
+  powershell -NoProfile -Command "$p=New-Object System.Diagnostics.ProcessStartInfo; $p.FileName='%~f0'; $p.Arguments='""'+$env:USERNAME+'""'; $p.Verb='RunAs'; $p.UseShellExecute=$true; [Diagnostics.Process]::Start($p)|Out-Null"
   exit /b
 )
+if not defined KIDSCONTROL_ACCOUNT set "KIDSCONTROL_ACCOUNT=%USERNAME%"
 set SERVER={server}
 set TICKET={ticket}
 call :report installer_opened
