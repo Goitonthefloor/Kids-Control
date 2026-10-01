@@ -117,6 +117,38 @@ def test_posix_only_child_processes(monkeypatch):
     assert [p.pid for p in enforce._list_posix()] == [11]
 
 
+def test_truncated_comm_does_not_hide_blocked_program(monkeypatch):
+    """Linux comm is 15 bytes. RobloxPlayerBeta is the documented block example."""
+    seen = {}
+
+    def check_output(argv, **kwargs):
+        seen["argv"] = argv
+        return "11 1001 RobloxPlayerBet /opt/roblox/RobloxPlayerBeta --play\n"
+
+    monkeypatch.setattr(enforce, "_target_uid", 1001)
+    monkeypatch.setattr(enforce, "detect_os", lambda: "linux")
+    monkeypatch.setattr(enforce.subprocess, "check_output", check_output)
+    monkeypatch.setattr(enforce.os, "readlink", lambda path: "/opt/roblox/RobloxPlayerBeta")
+    procs = enforce._list_posix()
+    assert "-ww" in seen["argv"]
+    assert "pid=,uid=,comm=,args=" in seen["argv"]
+    assert [p.name for p in procs] == ["RobloxPlayerBeta"]
+    assert enforce.matches_rule(procs[0].name, "RobloxPlayerBeta", "exact")
+    assert enforce.matches_rule("RobloxPlayerBet", "RobloxPlayerBeta", "contains") is False
+
+
+def test_script_comm_is_not_replaced_by_the_interpreter(monkeypatch):
+    monkeypatch.setattr(enforce, "_target_uid", 1001)
+    monkeypatch.setattr(enforce, "detect_os", lambda: "linux")
+    monkeypatch.setattr(
+        enforce.subprocess,
+        "check_output",
+        lambda *a, **k: "11 1001 family-game-lau /bin/bash /usr/local/bin/family-game-launcher\n",
+    )
+    monkeypatch.setattr(enforce.os, "readlink", lambda path: "/usr/bin/bash")
+    assert [p.name for p in enforce._list_posix()] == ["family-game-lau"]
+
+
 def test_windows_only_local_child_processes(monkeypatch):
     monkeypatch.setattr(enforce, "_target_user", "Mia")
     monkeypatch.setenv("COMPUTERNAME", "PC")
