@@ -62,18 +62,57 @@ def list_processes() -> list[RunningProcess]:
     return _list_posix()
 
 
-def _list_posix() -> list[RunningProcess]:
+def _basename(value: str) -> str:
+    value = value.strip()
+    if value.endswith(" (deleted)"):
+        value = value[: -len(" (deleted)")]
+    if "/" in value:
+        value = value.rsplit("/", 1)[-1]
+    return value
+
+
+def _linux_exe(pid: int) -> str:
+    """Full executable path. `comm` is capped at 15 bytes by the kernel."""
     try:
-        out = subprocess.check_output(["ps", "-A", "-o", "pid=,uid=,comm="], text=True, stderr=subprocess.DEVNULL, timeout=5)
+        return os.readlink(f"/proc/{pid}/exe")
+    except OSError:
+        return ""
+
+
+def _program_name(comm: str, argv0: str = "", exe: str = "") -> str:
+    """Prefer the full program name when `ps` comm was truncated.
+
+    A longer interpreter path must not replace a script's own comm name.
+    Only a candidate that continues the truncated comm is used.
+    """
+    comm = _basename(comm)
+    if len(comm) < 15:
+        return comm
+    for candidate in (_basename(exe), _basename(argv0)):
+        if candidate.startswith(comm) and len(candidate) > len(comm):
+            return candidate
+    return comm
+
+
+def _list_posix() -> list[RunningProcess]:
+    # -ww: otherwise a narrow COLUMNS clips argv0 and the truncated comm cannot be repaired.
+    try:
+        out = subprocess.check_output(
+            ["ps", "-ww", "-A", "-o", "pid=,uid=,comm=,args="],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
     except Exception:
         return []
     procs: list[RunningProcess] = []
+    linux = detect_os() == "linux"
     for line in out.splitlines():
         line = line.strip()
         if not line:
             continue
-        parts = line.split(None, 2)
-        if len(parts) != 3:
+        parts = line.split(None, 3)
+        if len(parts) < 3:
             continue
         try:
             pid = int(parts[0])
@@ -82,10 +121,11 @@ def _list_posix() -> list[RunningProcess]:
             continue
         if _target_uid is not None and uid != _target_uid:
             continue
-        name = parts[2].strip()
-        # basename for paths
-        if "/" in name:
-            name = name.rsplit("/", 1)[-1]
+        argv0 = parts[3].split(None, 1)[0] if len(parts) > 3 else ""
+        exe = _linux_exe(pid) if linux and len(parts[2]) >= 15 else ""
+        name = _program_name(parts[2], argv0, exe)
+        if not name:
+            continue
         procs.append(RunningProcess(pid=pid, name=name))
     return procs
 
