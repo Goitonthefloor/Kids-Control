@@ -33,9 +33,26 @@ def package_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def _systemd_quoted(value: str) -> str:
+    """Quote one word for settings that unquote (ExecStart, Environment)."""
+    return json.dumps(str(value).replace("%", "%%"), ensure_ascii=False)
+
+
+def _systemd_literal_path(value: str) -> str:
+    """Path for WorkingDirectory and EnvironmentFile.
+
+    Those settings do not strip quotes. A quoted path is not absolute, so
+    systemd refuses to start the unit and the agent never enforces rules.
+    """
+    text = str(value).replace("%", "%%")
+    if not text.startswith("/") or any(ch.isspace() or ch in "\"'" for ch in text):
+        raise ValueError("unsafe systemd path")
+    return text
+
+
 def render_systemd_unit(*, python: str, install_dir: Path, env_file: Path) -> str:
-    def quote(value):
-        return json.dumps(str(value).replace("%", "%%"), ensure_ascii=False)
+    directory = _systemd_literal_path(install_dir)
+    config = _systemd_literal_path(env_file)
     return f"""[Unit]
 Description=KidsControl Client Agent
 After=network-online.target
@@ -45,10 +62,10 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
-WorkingDirectory={quote(install_dir)}
-Environment={quote('PYTHONPATH=' + str(install_dir))}
-EnvironmentFile=-{quote(env_file)}
-ExecStart={quote(python)} -m kidscontrol_agent --env {quote(env_file)}
+WorkingDirectory={directory}
+Environment={_systemd_quoted('PYTHONPATH=' + str(install_dir))}
+EnvironmentFile=-{config}
+ExecStart={_systemd_quoted(python)} -m kidscontrol_agent --env {_systemd_quoted(env_file)}
 Restart=always
 RestartSec=5
 

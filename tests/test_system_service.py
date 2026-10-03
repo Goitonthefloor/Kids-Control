@@ -1,5 +1,7 @@
 """The agent must install as a system service, not as the child account."""
 
+import shutil
+import subprocess
 from pathlib import Path, PurePosixPath
 
 from kidscontrol_agent.enforce import is_protected_process
@@ -12,16 +14,28 @@ from kidscontrol_agent.service_install import (
 from kidscontrol_agent.setup import main
 
 
-def test_systemd_unit_runs_as_root():
+def test_systemd_unit_runs_as_root(tmp_path):
     text = render_systemd_unit(
         python="/usr/bin/python3",
-        install_dir=PurePosixPath("/opt/kidscontrol-client"),
-        env_file=PurePosixPath("/etc/kidscontrol/client.env"),
+        install_dir=PurePosixPath("/opt/kids%control"),
+        env_file=PurePosixPath("/etc/kids%control/client.env"),
     )
     assert "User=root" in text
     assert "Group=root" in text
     assert "Restart=always" in text
-    assert "/etc/kidscontrol/client.env" in text
+    # Quotes here are part of the path. systemd then refuses to start the unit.
+    assert 'WorkingDirectory="/' not in text
+    assert "WorkingDirectory=/opt/kids%%control\n" in text
+    assert 'EnvironmentFile=-"/' not in text
+    assert "EnvironmentFile=-/etc/kids%%control/client.env\n" in text
+    assert 'ExecStart="/usr/bin/python3" -m kidscontrol_agent --env "/etc/kids%%control/client.env"\n' in text
+    analyze = shutil.which("systemd-analyze")
+    if not analyze:
+        return
+    unit = tmp_path / "kidscontrol-agent.service"
+    unit.write_text(text, encoding="utf-8")
+    result = subprocess.run([analyze, "verify", str(unit)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
 
 
 def test_launchd_plist_runs_as_root():
