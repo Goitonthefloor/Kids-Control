@@ -48,7 +48,7 @@ from app.db import (
     init_db,
     utcnow,
 )
-from app.ssh_control import PACKAGE_NAME_RE, remote_update_script, run_ssh, store_private_key
+from app.ssh_control import PACKAGE_NAME_RE, remote_update_script, run_ssh, ssh_endpoint_unsafe, store_private_key
 
 _VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+:~-]{0,79}$")
 _SOURCE_RE = re.compile(r"^[A-Za-z0-9._+-]{1,32}$")
@@ -1654,11 +1654,13 @@ async def setup_claim(request: Request):
         child = db.query(Child).filter_by(id=device.child_id).first()
         if not child or not child.active:
             return JSONResponse({"error": "unknown_child"}, status_code=404)
+        private_key = str(body.get("ssh_private_key") or "")
+        ssh_user = str(body.get("ssh_user") or "").strip() or None
+        if private_key.strip() and ssh_endpoint_unsafe(ssh_user, host_name):
+            return JSONResponse({"error": "invalid_ssh_target"}, status_code=400)
         device.os_family = os_family
         device.hostname = host_name
         device.ssh_host_pubkey = host_pubkey or None
-        private_key = str(body.get("ssh_private_key") or "")
-        ssh_user = str(body.get("ssh_user") or "").strip() or None
         if private_key.strip():
             device.ssh_user = ssh_user
             device.ssh_host = host_name
@@ -1723,6 +1725,10 @@ async def setup_enroll(request: Request):
             child = get_child_by_slug(db, slug)
             if not child or not child.active:
                 return JSONResponse({"error": "unknown_child"}, status_code=404)
+        private_key = str(body.get("ssh_private_key") or "")
+        ssh_user = str(body.get("ssh_user") or "").strip() or None
+        if private_key.strip() and ssh_endpoint_unsafe(ssh_user, host_name):
+            return JSONResponse({"error": "invalid_ssh_target"}, status_code=400)
         key = secrets.token_urlsafe(24)
         device = Device(
             child_id=child.id,
@@ -1732,8 +1738,6 @@ async def setup_enroll(request: Request):
             hostname=host_name,
             ssh_host_pubkey=host_pubkey or None,
         )
-        private_key = str(body.get("ssh_private_key") or "")
-        ssh_user = str(body.get("ssh_user") or "").strip() or None
         if private_key.strip():
             device.ssh_user = ssh_user
             device.ssh_host = host_name

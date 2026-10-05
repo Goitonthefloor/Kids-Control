@@ -707,6 +707,69 @@ def test_package_name_and_pinned_host_key():
     fresh = Device(ssh_host="emma-pc", ssh_port=22, ssh_user="root")
     argv = ssh_argv(fresh, "true")
     assert "StrictHostKeyChecking=accept-new" in argv
+    assert "root@emma-pc" in argv
+
+    injected = Device(
+        ssh_enabled=True,
+        ssh_host="kid-pc",
+        ssh_port=22,
+        ssh_user="-oProxyCommand=id",
+        ssh_host_pubkey="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKidsControlHostKeyPinTest",
+    )
+    with pytest.raises(ValueError):
+        ssh_argv(injected, "true")
+    dashed_host = Device(ssh_enabled=True, ssh_host="-oProxyCommand=id", ssh_port=22, ssh_user="root")
+    with pytest.raises(ValueError):
+        ssh_argv(dashed_host, "true")
+
+    from app.ssh_control import run_ssh
+
+    def _forbid_ssh(*_args, **_kwargs):
+        raise AssertionError("ssh was executed")
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("app.ssh_control.subprocess.run", _forbid_ssh)
+    try:
+        with pytest.raises(ValueError):
+            run_ssh(injected, "true", timeout=5)
+    finally:
+        monkeypatch.undo()
+
+
+def test_enroll_rejects_ssh_option_injection(client):
+    login(client)
+    created = client.post(
+        "/ui/children/add",
+        data={"display_name": "Ssh Guard", "slug": "sshguard"},
+        follow_redirects=False,
+    )
+    assert created.status_code == 302
+    db = SessionLocal()
+    try:
+        token = db.query(Child).filter_by(slug="sshguard").one().enroll_token
+    finally:
+        db.close()
+    rejected = client.post(
+        "/api/v1/setup/enroll",
+        json={
+            "token": token,
+            "device_name": "Bad PC",
+            "os": "linux",
+            "hostname": "kid-pc",
+            "ssh_user": "-oProxyCommand=id",
+            "ssh_private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\nQUJD\n-----END OPENSSH PRIVATE KEY-----\n",
+            "ssh_host_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKidsControlHostKeyPinTest",
+        },
+    )
+    assert rejected.status_code == 400
+    assert rejected.json()["error"] == "invalid_ssh_target"
+    db = SessionLocal()
+    try:
+        child = db.query(Child).filter_by(slug="sshguard").one()
+        assert child.enroll_token == token
+        assert db.query(Device).filter_by(child_id=child.id).count() == 0
+    finally:
+        db.close()
 
 
 def test_lang_redirect_stays_on_site(client):
