@@ -12,6 +12,21 @@ from app import config
 from app.db import Device
 
 PACKAGE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,80}$")
+# OpenSSH parses an argument that starts with "-" as an option. A user such as
+# "-oProxyCommand=..." is therefore executed locally on the hub.
+SSH_USER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9._-]{0,31}$")
+SSH_HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,253}$")
+
+
+def ssh_endpoint_unsafe(user: str | None, host: str | None) -> bool:
+    """True when a provided SSH user or host could change the ssh command line."""
+    user = (user or "").strip()
+    host = (host or "").strip()
+    if user and not SSH_USER_RE.fullmatch(user):
+        return True
+    if host and not SSH_HOST_RE.fullmatch(host):
+        return True
+    return False
 
 
 def ssh_target(device: Device) -> str:
@@ -19,6 +34,8 @@ def ssh_target(device: Device) -> str:
     user = (device.ssh_user or "").strip()
     if not host or not user:
         raise ValueError("SSH-Host und SSH-Benutzer müssen gesetzt sein.")
+    if ssh_endpoint_unsafe(user, host):
+        raise ValueError("SSH-Host oder SSH-Benutzer ist ungültig.")
     return f"{user}@{host}"
 
 
@@ -56,6 +73,8 @@ def _pin_host_key(device: Device) -> bool:
 
 
 def ssh_argv(device: Device, remote_command: str) -> list[str]:
+    # Reject before pinning a host key or spawning ssh.
+    ssh_target(device)
     pinned = _pin_host_key(device)
     argv = [
         "ssh",
