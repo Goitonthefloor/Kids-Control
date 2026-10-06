@@ -58,6 +58,7 @@ from app.policy import (
     build_agent_policy,
     compute_session,
     list_blocked_apps,
+    local_day,
     program_rows,
     tick_running_apps,
 )
@@ -976,7 +977,7 @@ async def child_schedule(request: Request, slug: str):
             return HTMLResponse("Kind nicht gefunden", status_code=404)
 
         if action == "reset_daily":
-            day = now_local().date().isoformat()
+            day = local_day(child)
             db.query(DailyUsage).filter_by(child_id=child.id, day=day).delete(synchronize_session=False)
             audit(db, actor=config.ADMIN_USER, action="RESET_DAILY", child_slug=slug, details=day)
             db.commit()
@@ -1464,7 +1465,7 @@ def grant_day(request: Request, slug: str):
         child = get_child_by_slug(db, slug)
         if not child:
             return HTMLResponse("Kind nicht gefunden", status_code=404)
-        day = now_local().date().isoformat()
+        day = local_day(child)
         row = db.query(DayOverride).filter_by(child_id=child.id, day=day).first()
         if row and row.enabled:
             row.enabled = False
