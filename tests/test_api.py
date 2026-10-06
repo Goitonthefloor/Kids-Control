@@ -1221,3 +1221,67 @@ def test_login_accepts_argon2_and_setup_stores_hashes(client, tmp_path, monkeypa
     assert "file-admin-pw" not in legacy.read_text(encoding="utf-8")
     assert passwords_match("file-admin-pw", sealed["KIDSCONTROL_ADMIN_PASSWORD"])
     assert passwords_match("file-setup-pw", sealed["KIDSCONTROL_SETUP_PASSWORD"])
+
+
+def test_day_grant_and_reset_follow_child_timezone(client, monkeypatch):
+    """Server-local midnight must not grant or clear a different child day."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from app.db import DailyUsage, DayOverride
+    from app.policy import compute_session
+
+    login(client)
+    created = client.post(
+        "/ui/children/add",
+        data={"display_name": "Noah", "slug": "noah-tz"},
+        follow_redirects=False,
+    )
+    assert created.status_code == 302
+    db = SessionLocal()
+    try:
+        child = db.query(Child).filter_by(slug="noah-tz").one()
+        child.timezone = "America/New_York"
+        db.add(DailyUsage(child_id=child.id, day="2026-10-06", used_minutes=90, remainder_seconds=0))
+        db.add(DailyUsage(child_id=child.id, day="2026-10-07", used_minutes=1, remainder_seconds=0))
+        db.commit()
+    finally:
+        db.close()
+
+    # 20:00 in New York is already the next calendar day in Berlin.
+    server_now = datetime(2026, 10, 7, 2, 0, tzinfo=ZoneInfo("Europe/Berlin"))
+    child_now = datetime(2026, 10, 6, 20, 0, tzinfo=ZoneInfo("America/New_York"))
+    monkeypatch.setattr("app.main.now_local", lambda: server_now)
+    monkeypatch.setattr("app.policy.now_local", lambda tz: child_now)
+
+    granted = client.post("/ui/grant/noah-tz/day", follow_redirects=False)
+    assert granted.status_code == 302
+    db = SessionLocal()
+    try:
+        child = db.query(Child).filter_by(slug="noah-tz").one()
+        row = db.query(DayOverride).filter_by(child_id=child.id).one()
+        assert row.day == "2026-10-06"
+        assert row.enabled is True
+        state = compute_session(db, child, tick_usage=False)
+        assert state["allow"] is True
+        assert state["reason"] == "override-day"
+    finally:
+        db.close()
+
+    reset = client.post(
+        "/ui/child/noah-tz/schedule",
+        data={"action": "reset_daily"},
+        follow_redirects=False,
+    )
+    assert reset.status_code == 302
+    db = SessionLocal()
+    try:
+        child = db.query(Child).filter_by(slug="noah-tz").one()
+        days = {
+            row.day: row.used_minutes
+            for row in db.query(DailyUsage).filter_by(child_id=child.id).all()
+        }
+        assert "2026-10-06" not in days
+        assert days["2026-10-07"] == 1
+    finally:
+        db.close()

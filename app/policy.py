@@ -205,7 +205,12 @@ def compute_session(db: Session, child: Child, *, tick_usage: bool = False) -> d
     }
 
 
-def _local_day(child: Child) -> str:
+def local_day(child: Child) -> str:
+    """Calendar day in the child's timezone.
+
+    Screen-time rows, day overrides, and quota usage all share this key.
+    The server timezone is a different clock and must not be used here.
+    """
     return now_local(child_tz(child)).date().isoformat()
 
 
@@ -224,11 +229,11 @@ def quota_exhausted(db: Session, child: Child, rule: AppRule) -> bool:
     limit = int(rule.daily_minutes or 0)
     if limit <= 0:
         return True
-    return used_minutes_for(db, rule.id, _local_day(child)) >= limit
+    return used_minutes_for(db, rule.id, local_day(child)) >= limit
 
 
 def program_rows(db: Session, child: Child) -> list[dict]:
-    day = _local_day(child)
+    day = local_day(child)
     rows: list[dict] = []
     for rule in child.app_rules:
         used = used_minutes_for(db, rule.id, day) if rule.scope == "quota" else 0
@@ -326,7 +331,7 @@ def _charge_interval(db: Session, rule_id: int, day: str, start: datetime, end: 
 
 
 def active_quota_apps(db: Session, child: Child) -> list[dict]:
-    day = _local_day(child)
+    day = local_day(child)
     out: list[dict] = []
     rules = (
         db.query(AppRule)
