@@ -1221,3 +1221,74 @@ def test_login_accepts_argon2_and_setup_stores_hashes(client, tmp_path, monkeypa
     assert "file-admin-pw" not in legacy.read_text(encoding="utf-8")
     assert passwords_match("file-admin-pw", sealed["KIDSCONTROL_ADMIN_PASSWORD"])
     assert passwords_match("file-setup-pw", sealed["KIDSCONTROL_SETUP_PASSWORD"])
+
+
+def test_ssh_update_does_not_block_agent_heartbeat(client, monkeypatch):
+    """A remote update must not hold the SQLite write lock across SSH.
+
+    Enrollment turns SSH on for Linux PCs. The update request used to flush a
+    command row and then wait for apt, so the agent's next sync got
+    "database is locked" and fail-closed into disabling the child account.
+    """
+    from app.db import AuditLog, Device, DeviceCommand
+
+    login(client)
+    created = client.post(
+        "/ui/children/add",
+        data={"display_name": "Mira", "slug": "mira"},
+        follow_redirects=False,
+    )
+    assert created.status_code == 302
+    added = client.post(
+        "/ui/child/mira/devices/add",
+        data={"name": "Mira PC", "os_family": "linux"},
+        follow_redirects=False,
+    )
+    assert added.status_code == 302
+    db = SessionLocal()
+    try:
+        device = db.query(Device).filter_by(name="Mira PC").one()
+        device_id = device.id
+        device_key = device.device_key
+    finally:
+        db.close()
+    saved = client.post(
+        f"/ui/child/mira/devices/{device_id}/ssh",
+        data={"ssh_enabled": "1", "ssh_host": "mira-pc", "ssh_port": "22", "ssh_user": "mira"},
+        follow_redirects=False,
+    )
+    assert saved.status_code == 302
+
+    def fake_ssh(device, command, timeout=180):
+        other = SessionLocal()
+        try:
+            other.add(AuditLog(actor="agent", action="HEARTBEAT", child_slug="mira", details="during-ssh"))
+            other.commit()
+        finally:
+            other.close()
+        return 0, "updated"
+
+    monkeypatch.setattr("app.main.run_ssh", fake_ssh)
+    response = client.post(
+        f"/ui/child/mira/devices/{device_id}/update",
+        data={"package_name": ""},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    db = SessionLocal()
+    try:
+        cmd = db.query(DeviceCommand).filter_by(device_id=device_id).one()
+        assert cmd.status == "done"
+        assert cmd.via == "ssh"
+        assert "database is locked" not in (cmd.output or "")
+        beat = db.query(AuditLog).filter_by(action="HEARTBEAT", child_slug="mira").one()
+        assert beat.details == "during-ssh"
+    finally:
+        db.close()
+
+    synced = client.post(
+        "/api/v1/agent/sync",
+        headers={"X-Device-Key": device_key},
+        json={"active": True, "hostname": "mira-pc", "os": "linux"},
+    )
+    assert synced.status_code == 200
