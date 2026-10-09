@@ -1307,26 +1307,30 @@ def _queue_or_ssh_update(db, device: Device, *, package_name: str | None, actor:
         return t(lang, "package_invalid")
     kind = "update_one" if package_name else "update_all"
     if device.ssh_enabled and device.os_family == "linux":
-        cmd = DeviceCommand(
-            device_id=device.id,
-            kind=kind,
-            package_name=package_name,
-            status="running",
-            via="ssh",
-        )
-        db.add(cmd)
-        db.flush()
+        # Do not insert the command until SSH returns. A flushed row holds
+        # SQLite's write lock for the whole apt/dnf run. The child's next
+        # heartbeat then fails, and the agent treats that as "hub unreachable"
+        # and disables the account.
         try:
             code, text = run_ssh(device, remote_update_script(package_name))
-            cmd.status = "done" if code == 0 else "failed"
-            cmd.output = text
-            cmd.finished_at = utcnow()
+            status = "done" if code == 0 else "failed"
+            output = text
         except Exception as exc:
-            cmd.status = "failed"
-            cmd.output = str(exc)
-            cmd.finished_at = utcnow()
+            status = "failed"
+            output = str(exc)
+        db.add(
+            DeviceCommand(
+                device_id=device.id,
+                kind=kind,
+                package_name=package_name,
+                status=status,
+                via="ssh",
+                output=output,
+                finished_at=utcnow(),
+            )
+        )
         audit(db, actor=actor, action="REMOTE_UPDATE_SSH", child_slug=child_slug, details=package_name or "all")
-        return t(lang, "update_ssh", status=cmd.status, detail=(cmd.output or "")[:180])
+        return t(lang, "update_ssh", status=status, detail=(output or "")[:180])
 
     db.add(
         DeviceCommand(
