@@ -19,7 +19,7 @@ os.environ["KIDSCONTROL_SECRET"] = "test-secret"
 os.environ.pop("DATABASE_URL", None)
 
 from app.db import AppRule, Child, Device, Schedule, SessionLocal, init_db  # noqa: E402
-from app.main import app  # noqa: E402
+from app.main import _DEVICE_KEY_RE, app  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -1221,3 +1221,105 @@ def test_login_accepts_argon2_and_setup_stores_hashes(client, tmp_path, monkeypa
     assert "file-admin-pw" not in legacy.read_text(encoding="utf-8")
     assert passwords_match("file-admin-pw", sealed["KIDSCONTROL_ADMIN_PASSWORD"])
     assert passwords_match("file-setup-pw", sealed["KIDSCONTROL_SETUP_PASSWORD"])
+
+
+def test_claimed_device_key_stops_working_after_setup_rotates_it(client):
+    """The install ticket is on the child PC, so claim's key must not stay valid."""
+    import re
+    import secrets
+
+    from app.guards import clear_failures
+
+    clear_failures("install:testclient")
+    login(client)
+    client.post("/ui/children/add", data={"display_name": "Keykid", "slug": "keykid"}, follow_redirects=False)
+    client.post(
+        "/ui/child/keykid/apps/add",
+        data={"label": "Minecraft", "pattern": "minecraft", "match_mode": "contains", "scope": "quota", "daily_minutes": "30"},
+        follow_redirects=False,
+    )
+    page = client.get("/dashboard")
+    token = re.search(r"/install/([A-Za-z0-9_-]{16,64})", page.text).group(1)
+    headers = {
+        "Accept": "text/html",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0",
+    }
+    assigned = client.post(
+        f"/install/{token}",
+        data={"child_slug": "keykid", "device_name": "Zimmer-PC"},
+        headers=headers,
+        follow_redirects=False,
+    )
+    assert assigned.status_code == 303
+    ticket = assigned.headers["location"].rsplit("/", 1)[-1]
+    claimed = client.post(
+        "/api/v1/setup/claim",
+        json={"ticket": ticket, "os": "linux", "hostname": "zimmer", "ssh_host_key": ""},
+    )
+    assert claimed.status_code == 200
+    leaked = claimed.json()["device_key"]
+    db = SessionLocal()
+    try:
+        child = db.query(Child).filter_by(slug="keykid").one()
+        rule_id = db.query(AppRule).filter_by(child_id=child.id, pattern="minecraft").one().id
+    finally:
+        db.close()
+
+    rejected = client.post(
+        "/api/v1/setup/rotate-key",
+        headers={"X-Device-Key": leaked},
+        json={"device_key": "short"},
+    )
+    assert rejected.status_code == 400
+    still = client.post(
+        "/api/v1/agent/sync",
+        headers={"X-Device-Key": leaked},
+        json={"active": True, "os": "linux", "running_apps": [rule_id]},
+    )
+    assert still.status_code == 200
+
+    service_key = secrets.token_urlsafe(24)
+    assert _DEVICE_KEY_RE.fullmatch(service_key)
+    rotated = client.post(
+        "/api/v1/setup/rotate-key",
+        headers={"X-Device-Key": leaked},
+        json={"device_key": service_key},
+    )
+    assert rotated.status_code == 200
+    assert rotated.json() == {"ok": True}
+    assert service_key not in rotated.text
+
+    stolen = client.post(
+        "/api/v1/agent/sync",
+        headers={"X-Device-Key": leaked},
+        json={"active": True, "os": "linux", "running_apps": []},
+    )
+    assert stolen.status_code == 401
+    honest = client.post(
+        "/api/v1/agent/sync",
+        headers={"X-Device-Key": service_key},
+        json={"active": True, "os": "linux", "running_apps": [rule_id]},
+    )
+    assert honest.status_code == 200
+    again = client.post(
+        "/api/v1/setup/claim",
+        json={"ticket": ticket, "os": "linux", "hostname": "zimmer", "ssh_host_key": ""},
+    )
+    assert again.status_code == 409
+    assert service_key not in again.text
+    assert leaked not in again.text
+    status = client.get(f"/install/{token}/status/{ticket}", headers={"Accept": "application/json"})
+    assert service_key not in status.text
+    assert any("Systemdienst" in line for line in status.json()["messages"])
+    second = client.post(
+        "/api/v1/setup/rotate-key",
+        headers={"X-Device-Key": service_key},
+        json={"device_key": secrets.token_urlsafe(24)},
+    )
+    assert second.status_code == 409
+    assert client.post(
+        "/api/v1/agent/sync",
+        headers={"X-Device-Key": service_key},
+        json={"active": False, "os": "linux", "running_apps": []},
+    ).status_code == 200
+    clear_failures("install:testclient")

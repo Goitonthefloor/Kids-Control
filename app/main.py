@@ -161,6 +161,7 @@ def child_install_url(request: Request, token: str) -> str:
 
 
 _INSTALL_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+_DEVICE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{32,64}$")
 
 
 def install_lang(request: Request) -> str:
@@ -1592,6 +1593,17 @@ def _setup_is_finished(db, device_id: int) -> bool:
     )
 
 
+def _device_key_secured(db, device_id: int) -> bool:
+    """True once setup has replaced the key returned by claim.
+
+    The install page puts the ticket in the child PC's address bar, so the
+    child can call claim and read that first key. It must stop working.
+    """
+    return (
+        db.query(SetupEvent).filter_by(device_id=device_id, code="key_secured").first() is not None
+    )
+
+
 @app.post("/api/v1/setup/progress")
 async def setup_progress(request: Request):
     """Confirmation the child PC shows in the browser while setup runs."""
@@ -1650,6 +1662,8 @@ async def setup_claim(request: Request):
             return JSONResponse({"error": "unknown_ticket"}, status_code=404)
         if _setup_is_finished(db, device.id):
             return JSONResponse({"error": "setup_finished"}, status_code=409)
+        if _device_key_secured(db, device.id):
+            return JSONResponse({"error": "device_key_secured"}, status_code=409)
         clear_failures(attempt_key)
         child = db.query(Child).filter_by(id=device.child_id).first()
         if not child or not child.active:
@@ -1762,6 +1776,48 @@ async def setup_enroll(request: Request):
                 "ssh_ready": bool(device.ssh_key_path),
             }
         )
+    finally:
+        db.close()
+
+
+@app.post("/api/v1/setup/rotate-key")
+async def setup_rotate_key(request: Request):
+    """Replace the claim key with one generated on the child PC.
+
+    Only the first replacement is accepted. A later caller who still has the
+    key from claim cannot read or swap the service key.
+    """
+    current = request.headers.get("X-Device-Key") or request.headers.get("x-device-key") or ""
+    if not current:
+        return JSONResponse({"error": "missing_device_key"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    new_key = str(body.get("device_key") or "").strip()
+    if not _DEVICE_KEY_RE.fullmatch(new_key) or new_key == current:
+        return JSONResponse({"error": "invalid_device_key"}, status_code=400)
+    db = SessionLocal()
+    try:
+        device = db.query(Device).filter_by(device_key=current).first()
+        if not device:
+            return JSONResponse({"error": "unknown_device"}, status_code=401)
+        if _device_key_secured(db, device.id):
+            return JSONResponse({"error": "device_key_secured"}, status_code=409)
+        if db.query(Device).filter_by(device_key=new_key).first():
+            return JSONResponse({"error": "device_key_in_use"}, status_code=409)
+        device.device_key = new_key
+        db.add(SetupEvent(device_id=device.id, code="key_secured"))
+        child = db.query(Child).filter_by(id=device.child_id).first()
+        audit(
+            db,
+            actor="client-setup",
+            action="DEVICE_KEY_ROTATE",
+            child_slug=child.slug if child else None,
+            details=device.name,
+        )
+        db.commit()
+        return JSONResponse({"ok": True})
     finally:
         db.close()
 
