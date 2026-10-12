@@ -6,6 +6,7 @@ import argparse
 import getpass
 import json
 import os
+import secrets
 import sys
 import urllib.error
 import urllib.request
@@ -65,6 +66,46 @@ def post_progress(server: str, ticket: str, code: str, detail: str = "") -> None
         _post(server, "/api/v1/setup/progress", payload)
     except SystemExit as exc:
         print(f"Hinweis: Meldung {code} konnte nicht gesendet werden ({exc}).")
+
+
+def secure_device_key(server: str, device_key: str) -> str:
+    """Replace the key claim/enroll just returned. That value is visible to the child.
+
+    The install page shows the ticket, and the enroll token is inside the
+    downloaded script. Either can be used to read the first device key. The
+    replacement is generated here and only the system service keeps it.
+    """
+    new_key = secrets.token_urlsafe(24)
+    url = server.rstrip("/") + "/api/v1/setup/rotate-key"
+    data = json.dumps({"device_key": new_key}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "X-Device-Key": device_key,
+            "User-Agent": f"KidsControl-Setup/{detect_os()}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")
+        try:
+            message = json.loads(detail).get("error") or detail
+        except Exception:
+            message = detail or exc.reason
+        if message == "device_key_secured":
+            raise SystemExit(
+                "Der Geräteschlüssel wurde schon von einem anderen Aufruf übernommen. "
+                "Lege den PC in der Maske neu an und starte die Einrichtung erneut."
+            ) from exc
+        raise SystemExit(f"Server antwortet {exc.code}: {message}") from exc
+    if not body.get("ok"):
+        raise SystemExit("Geräteschlüssel konnte nicht gesichert werden.")
+    return new_key
 
 
 def claim(
@@ -229,6 +270,7 @@ def main(argv: list[str] | None = None) -> int:
                 ssh_user=getpass.getuser(),
                 ssh_host_key=local_host_public_key(),
             )
+        result["device_key"] = secure_device_key(args.server, result["device_key"])
     except SystemExit as exc:
         if args.ticket:
             post_progress(args.server, args.ticket, "failed", detail=str(exc))

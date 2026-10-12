@@ -49,6 +49,37 @@ def test_windows_task_runs_as_system():
     assert "kidscontrol_loop" in runner
 
 
+def test_setup_replaces_the_key_claim_returned(monkeypatch):
+    import json
+
+    from kidscontrol_agent.setup import secure_device_key
+
+    seen = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"ok": true}'
+
+    def fake_urlopen(req, timeout=0):
+        seen["url"] = req.full_url
+        seen["header"] = req.get_header("X-device-key")
+        seen["body"] = json.loads(req.data.decode("utf-8"))
+        return Response()
+
+    monkeypatch.setattr("kidscontrol_agent.setup.urllib.request.urlopen", fake_urlopen)
+    new_key = secure_device_key("http://hub.example", "issued-by-claim")
+    assert seen["url"] == "http://hub.example/api/v1/setup/rotate-key"
+    assert seen["header"] == "issued-by-claim"
+    assert seen["body"] == {"device_key": new_key}
+    assert new_key != "issued-by-claim"
+
+
 def test_setup_refuses_unprivileged_account(monkeypatch):
     monkeypatch.setattr("kidscontrol_agent.setup.is_privileged", lambda: False)
     code = main(["--server", "http://127.0.0.1:9", "--token", "test-token"])
