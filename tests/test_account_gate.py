@@ -90,3 +90,52 @@ def test_session_warning_gates_login_before_logoff(tmp_path, backend, monkeypatc
 def test_missing_account_cannot_fall_back_to_locking_parent():
     with pytest.raises(ValueError, match="Kinderkonto fehlt"):
         agent.ManagedSession({})
+
+
+def test_windows_child_account_rejects_admins_and_unreadable_groups():
+    child = "S-1-5-21-100-1001"
+    admin = "S-1-5-21-100-500"
+    with pytest.raises(ValueError, match="Administrator"):
+        account._reject_windows_child_account(admin, [admin])
+    with pytest.raises(ValueError, match="Administrator"):
+        account._reject_windows_child_account(child, [admin, child])
+    # RID 1500 ends with the digits of Administrator but is a normal account.
+    account._reject_windows_child_account("S-1-5-21-100-1500", [admin])
+    with pytest.raises(ValueError, match="nicht gelesen"):
+        account._reject_windows_child_account(child, [])
+
+
+def test_windows_inspect_does_not_use_get_localgroupmember(monkeypatch):
+    monkeypatch.setattr(account, "detect_os", lambda: "windows")
+    seen = {}
+
+    def fake_powershell(script, user):
+        seen["script"] = script
+        seen["user"] = user
+        return json.dumps({
+            "id": "S-1-5-21-100-1001",
+            "disabled": False,
+            "admin_sids": "S-1-5-21-100-500",
+        })
+
+    monkeypatch.setattr(account, "_powershell", fake_powershell)
+    assert account.inspect_account("Mia") == {"id": "S-1-5-21-100-1001", "disabled": False}
+    assert seen["user"] == "Mia"
+    assert "Get-LocalGroupMember" not in seen["script"]
+    assert "Win32_Group" in seen["script"]
+    assert "S-1-5-32-544" in seen["script"]
+
+
+def test_windows_inspect_rejects_admin_sid(monkeypatch):
+    monkeypatch.setattr(account, "detect_os", lambda: "windows")
+    monkeypatch.setattr(
+        account,
+        "_powershell",
+        lambda script, user: json.dumps({
+            "id": "S-1-5-21-100-1001",
+            "disabled": False,
+            "admin_sids": "S-1-5-21-100-500,S-1-5-21-100-1001",
+        }),
+    )
+    with pytest.raises(ValueError, match="Administrator"):
+        account.inspect_account("Mia")
