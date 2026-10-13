@@ -29,19 +29,48 @@ def _powershell(script: str, user: str) -> str:
                  "$ErrorActionPreference='Stop'; " + script], env=env)
 
 
+# Built-in Windows accounts: Administrator, Guest, DefaultAccount, WDAGUtilityAccount.
+_WINDOWS_BUILTIN_RIDS = {"500", "501", "503", "504"}
+
+
+def _windows_admin_sids(value) -> list[str]:
+    if isinstance(value, list):
+        raw = value
+    else:
+        raw = str(value or "").split(",")
+    return [str(item).strip() for item in raw if str(item).strip()]
+
+
+def _reject_windows_child_account(sid: str, admin_sids: list[str]) -> None:
+    """Refuse built-in and administrator accounts. An unreadable admin group fails closed."""
+    rid = str(sid).rsplit("-", 1)[-1]
+    if rid in _WINDOWS_BUILTIN_RIDS or sid in admin_sids:
+        raise ValueError("Administrator-/Systemkonto darf kein Kinderkonto sein")
+    if not admin_sids:
+        raise ValueError("Administratorengruppe konnte nicht gelesen werden")
+
+
 def inspect_account(user: str) -> dict:
     if not re.fullmatch(r"[\w][\w .@-]{0,63}", user, flags=re.UNICODE):
         raise ValueError("Lokalen Anmeldenamen des Kinderkontos angeben")
     system = detect_os()
     if system == "windows":
+        # Get-LocalGroupMember throws "Failed to compare two elements in the array"
+        # when Administrators contains a Microsoft account or an unresolved SID.
+        # That is the normal Windows home setup, and it aborted enrollment entirely.
         data = json.loads(_powershell(
+            "$ProgressPreference='SilentlyContinue'; "
             "$u=Get-LocalUser -Name $env:KC_ACCOUNT; "
-            "$admins=@(Get-LocalGroupMember -SID 'S-1-5-32-544'); "
-            "@{id=$u.SID.Value; disabled=(!$u.Enabled); "
-            "admin=(@($admins | Where-Object {$_.SID -eq $u.SID}).Count -gt 0)} | ConvertTo-Json -Compress", user))
-        if data["admin"] or data["id"].endswith(("-500", "-501", "-503", "-504")):
-            raise ValueError("Administrator-/Systemkonto darf kein Kinderkonto sein")
-        return {"id": data["id"], "disabled": bool(data["disabled"])}
+            "$group=Get-CimInstance -ClassName Win32_Group -Filter \"SID='S-1-5-32-544'\"; "
+            "$sids=@(Get-CimAssociatedInstance -InputObject $group -ResultClassName Win32_Account | "
+            "ForEach-Object { $_.SID }); "
+            "@{id=$u.SID.Value; disabled=(!$u.Enabled); admin_sids=($sids -join ',')} | "
+            "ConvertTo-Json -Compress",
+            user,
+        ))
+        sid = str(data["id"])
+        _reject_windows_child_account(sid, _windows_admin_sids(data.get("admin_sids")))
+        return {"id": sid, "disabled": bool(data["disabled"])}
     import pwd
     import grp
     record = pwd.getpwnam(user)
