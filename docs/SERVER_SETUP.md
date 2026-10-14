@@ -64,7 +64,7 @@ Alternativ richtet der erste Browser-Aufruf denselben Schritt ein (`/setup`). Da
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-systemd lädt dieselbe Datei, siehe `systemd/kids-control.service`.
+Der systemd-Dienst übergibt `data/server.env` nicht an den Prozess. systemd würde die `$`-Folgen in den Argon2-Hashes auflösen und das Eltern-Login zerstören. Der Hub liest die Datei selbst, siehe `systemd/kids-control.service`.
 
 ## Danach in der UI
 
