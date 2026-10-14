@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import secrets
 from pathlib import Path
 
@@ -68,10 +69,40 @@ def parse_env_file(path: Path) -> dict[str, str]:
     return data
 
 
+# systemd EnvironmentFile expands $NAME after stripping quotes. An unset name
+# becomes empty, so an argon2id hash ($argon2id$v=19$m=...) is destroyed.
+_SYSTEMD_DOLLAR = re.compile(r"\$\{[A-Za-z0-9_]+\}|\$[A-Za-z0-9_]+")
+_PASSWORD_ENV_KEYS = ("KIDSCONTROL_ADMIN_PASSWORD", "KIDSCONTROL_SETUP_PASSWORD")
+
+
+def systemd_unset_expansion(value: str) -> str:
+    """Return value as systemd EnvironmentFile would if every $NAME is unset."""
+    protected = value.replace("$$", "\0")
+    expanded = _SYSTEMD_DOLLAR.sub("", protected)
+    return expanded.replace("\0", "$")
+
+
 def load_server_env_into_process() -> None:
-    """Fill empty process variables from data/server.env."""
+    """Fill process variables from data/server.env.
+
+    Empty variables are copied from the file. A password that already matches
+    the systemd EnvironmentFile expansion of the stored hash is restored,
+    because that expansion is not an operator override. Any other explicit
+    value stays as it was set.
+    """
     for key, value in parse_env_file(server_env_path()).items():
-        if key in _ENV_FILE_KEYS and not os.getenv(key):
+        if key not in _ENV_FILE_KEYS:
+            continue
+        current = os.getenv(key)
+        if not current:
+            os.environ[key] = value
+            continue
+        if (
+            key in _PASSWORD_ENV_KEYS
+            and is_password_hash(value)
+            and current != value
+            and current == systemd_unset_expansion(value)
+        ):
             os.environ[key] = value
 
 
