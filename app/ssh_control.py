@@ -34,6 +34,17 @@ def known_hosts_path() -> Path:
     return path
 
 
+def _known_hosts_name(host: str, port: int) -> str:
+    """Host token OpenSSH looks up in known_hosts.
+
+    Port 22 is stored as the bare host. `[host]:22` is not consulted for the
+    default port, so strict checking would reject every enrolled Linux PC.
+    """
+    if int(port) == 22:
+        return host
+    return f"[{host}]:{port}"
+
+
 def _pin_host_key(device: Device) -> bool:
     """Write the client-reported host key. Returns True when a key is pinned."""
     pubkey = " ".join((device.ssh_host_pubkey or "").split())
@@ -41,11 +52,13 @@ def _pin_host_key(device: Device) -> bool:
     if not pubkey or not host or any(ch in host for ch in " \t\r\n#|[]"):
         return False
     port = int(device.ssh_port or 22)
-    marker = f"[{host}]:{port} "
-    line = f"{marker}{pubkey}"
+    name = _known_hosts_name(host, port)
+    # Drop the previous line and the old `[host]:22` form that never matched.
+    prefixes = {f"{name} ", f"[{host}]:{port} "}
+    line = f"{name} {pubkey}"
     path = known_hosts_path()
     existing = path.read_text(encoding="utf-8") if path.is_file() else ""
-    kept = [row for row in existing.splitlines() if row and not row.startswith(marker)]
+    kept = [row for row in existing.splitlines() if row and not any(row.startswith(prefix) for prefix in prefixes)]
     kept.append(line)
     path.write_text("\n".join(kept) + "\n", encoding="utf-8")
     try:

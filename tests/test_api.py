@@ -682,29 +682,55 @@ def test_install_notice_token_rotation_and_host_key(client):
     assert "Neuer Einrichtungscode" in again.text
 
 
-def test_package_name_and_pinned_host_key():
+def test_package_name_and_pinned_host_key(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+
     import pytest
 
-    from app.ssh_control import remote_update_script, ssh_argv
+    from app.ssh_control import known_hosts_path, remote_update_script, ssh_argv
     from app.db import Device
 
+    monkeypatch.setenv("KIDSCONTROL_DATA_DIR", str(tmp_path))
     with pytest.raises(ValueError):
         remote_update_script("firefox;rm -rf /")
     script = remote_update_script("firefox")
     assert "firefox" in script
     assert "rm -rf" not in script
 
+    pubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKidsControlHostKeyPinTest"
     pinned = Device(
         ssh_host="emma-pc",
         ssh_port=22,
         ssh_user="root",
-        ssh_host_pubkey="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKidsControlHostKeyPinTest",
+        ssh_host_pubkey=pubkey,
     )
+    # An older hub wrote the bracket form. OpenSSH ignores it for port 22.
+    known_hosts_path().write_text(f"[emma-pc]:22 {pubkey}\nother-pc {pubkey}\n", encoding="utf-8")
     argv = ssh_argv(pinned, "true")
     assert "StrictHostKeyChecking=yes" in argv
     assert any(part.startswith("UserKnownHostsFile=") for part in argv)
+    lines = known_hosts_path().read_text(encoding="utf-8").splitlines()
+    assert f"emma-pc {pubkey}" in lines
+    assert f"[emma-pc]:22 {pubkey}" not in lines
+    assert f"other-pc {pubkey}" in lines
+    ssh_keygen = shutil.which("ssh-keygen")
+    if ssh_keygen:
+        found = subprocess.run(
+            [ssh_keygen, "-F", "emma-pc", "-f", str(known_hosts_path())],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert "found:" in found.stdout
 
-    fresh = Device(ssh_host="emma-pc", ssh_port=22, ssh_user="root")
+    pinned.ssh_port = 2222
+    ssh_argv(pinned, "true")
+    custom = known_hosts_path().read_text(encoding="utf-8").splitlines()
+    assert f"[emma-pc]:2222 {pubkey}" in custom
+    assert f"emma-pc {pubkey}" in custom
+
+    fresh = Device(ssh_host="new-pc", ssh_port=22, ssh_user="root")
     argv = ssh_argv(fresh, "true")
     assert "StrictHostKeyChecking=accept-new" in argv
 
