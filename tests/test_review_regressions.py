@@ -123,5 +123,20 @@ def test_windows_only_local_child_processes(monkeypatch):
     monkeypatch.setattr(enforce.subprocess, "check_output", lambda *a, **k:
         '"game.exe","10","Console","1","1 K","Running","PC\\Parent"\n'
         '"game.exe","11","Console","2","1 K","Running","PC\\Mia"\n'
-        '"game.exe","12","Console","3","1 K","Running","DOMAIN\\Mia"\n')
-    assert [p.pid for p in enforce._list_windows()] == [11]
+        '"game.exe","12","Console","3","1 K","Running","DOMAIN\\Mia"\n'
+        '"game.exe","13","Console","4","1 K","Running","MicrosoftAccount\\Mia"\n'
+        '"game.exe","14","Console","5","1 K","Running","AzureAD\\Mia"\n'
+        '"game.exe","15","Console","6","1 K","Running","MicrosoftAccount\\Parent"\n')
+    assert [p.pid for p in enforce._list_windows()] == [11, 13, 14]
+
+
+def test_windows_account_match_accepts_cloud_sign_in_not_other_domains():
+    assert enforce.windows_account_matches("PC\\Mia", "Mia", "PC")
+    assert enforce.windows_account_matches("pc\\mia", "Mia", "PC")
+    assert enforce.windows_account_matches("MicrosoftAccount\\Mia", "Mia", "PC")
+    assert enforce.windows_account_matches("AzureAD\\Mia", "Mia", "PC")
+    assert enforce.windows_account_matches("MicrosoftAccount\\Mia", "Mia", "")
+    assert not enforce.windows_account_matches("DOMAIN\\Mia", "Mia", "PC")
+    assert not enforce.windows_account_matches("MicrosoftAccount\\Parent", "Mia", "PC")
+    assert not enforce.windows_account_matches("Mia", "Mia", "PC")
+    assert not enforce.windows_account_matches("PC\\Mia", "Mia", "")
