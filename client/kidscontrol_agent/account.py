@@ -13,7 +13,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from kidscontrol_agent.enforce import detect_os
+from kidscontrol_agent.enforce import detect_os, windows_account_matches
 
 
 def _run(argv: list[str], *, env=None) -> str:
@@ -77,7 +77,7 @@ def set_gate(user: str, state: dict) -> None:
 
 
 def windows_sessions(user: str) -> list[int]:
-    """Enumerate only the selected local account, including disconnected sessions."""
+    """Sessions for this child, including Microsoft or Azure AD sign-in and disconnected sessions."""
     import ctypes
     from ctypes import wintypes as w
     api = ctypes.WinDLL("wtsapi32", use_last_error=True)
@@ -105,9 +105,16 @@ def windows_sessions(user: str) -> list[int]:
             api.WTSFreeMemory(buffer)
 
     try:
-        return [pointer[i].id for i in range(count.value)
-                if value(pointer[i].id, 5).casefold() == user.casefold()
-                and value(pointer[i].id, 7).casefold() == os.environ.get("COMPUTERNAME", "").casefold()]
+        computer = os.environ.get("COMPUTERNAME", "")
+        return [
+            pointer[i].id
+            for i in range(count.value)
+            if windows_account_matches(
+                f"{value(pointer[i].id, 7)}\\{value(pointer[i].id, 5)}",
+                user,
+                computer,
+            )
+        ]
     finally:
         api.WTSFreeMemory(pointer)
 

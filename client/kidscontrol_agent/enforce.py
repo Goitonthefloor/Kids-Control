@@ -90,6 +90,27 @@ def _list_posix() -> list[RunningProcess]:
     return procs
 
 
+# Sign-in domains Windows uses instead of the computer name. A same-named
+# DOMAIN\user must not match; these two labels are still the local child.
+_WINDOWS_CLOUD_DOMAINS = {"microsoftaccount", "azuread"}
+
+
+def windows_account_matches(account: str, user: str, computer: str = "") -> bool:
+    """True when `account` (`DOMAIN\\name`) is the enrolled child."""
+    text = (account or "").strip()
+    child = (user or "").strip()
+    if not text or not child or "\\" not in text:
+        return False
+    domain, name = text.split("\\", 1)
+    if name.casefold() != child.casefold():
+        return False
+    domain_key = domain.casefold()
+    machine = (computer or "").strip().casefold()
+    if machine and domain_key == machine:
+        return True
+    return domain_key in _WINDOWS_CLOUD_DOMAINS
+
+
 def _list_windows() -> list[RunningProcess]:
     try:
         out = subprocess.check_output(
@@ -102,14 +123,13 @@ def _list_windows() -> list[RunningProcess]:
         )
     except Exception:
         return []
+    computer = os.environ.get("COMPUTERNAME", "")
     procs: list[RunningProcess] = []
     for row in csv.reader(out.splitlines()):
         if len(row) < 2 or not row[1].isdigit():
             continue
-        if _target_user:
-            owner = os.environ.get("COMPUTERNAME", "") + "\\" + _target_user
-            if len(row) < 7 or row[6].casefold() != owner.casefold():
-                continue
+        if _target_user and (len(row) < 7 or not windows_account_matches(row[6], _target_user, computer)):
+            continue
         procs.append(RunningProcess(pid=int(row[1]), name=row[0]))
     return procs
 
