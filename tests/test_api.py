@@ -625,6 +625,79 @@ def test_usage_remainder_and_overnight_window():
     assert in_window(1320, 360, 600) is False
     assert in_window(900, 1110, 1000) is True
     assert minutes_until_end(1320, 360, 1380) == (24 * 60 - 1380) + 360
+    from app.policy import overnight_tail, same_day_window
+
+    assert same_day_window(16 * 60, 2 * 60, 23 * 60) is True
+    assert same_day_window(16 * 60, 2 * 60, 90) is False
+    assert overnight_tail(16 * 60, 2 * 60, 90) is True
+    assert overnight_tail(10 * 60, 20 * 60, 90) is False
+
+
+def test_overnight_window_stays_with_the_evening_it_started(monkeypatch):
+    """Friday 16:00–02:00 must not unlock Friday 01:30 or reset the quota at midnight."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from app import policy
+    from app.db import Base, DailyUsage, DayOverride
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    friday_evening = datetime(2026, 10, 16, 23, 0, tzinfo=timezone.utc)
+    saturday_morning = datetime(2026, 10, 17, 1, 30, tzinfo=timezone.utc)
+    friday_morning = datetime(2026, 10, 16, 1, 30, tzinfo=timezone.utc)
+    saturday_afternoon = datetime(2026, 10, 17, 15, 0, tzinfo=timezone.utc)
+
+    class Clock(datetime):
+        current = friday_evening
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current
+
+    monkeypatch.setattr(policy, "datetime", Clock)
+    with Session(engine, autoflush=False) as db:
+        child = Child(slug="mia", display_name="Mia", timezone="UTC", warn_minutes=10)
+        db.add(child)
+        db.flush()
+        db.add(Schedule(child_id=child.id, weekday=3, start_min=15 * 60, end_min=18 * 60, daily_minutes=30))
+        db.add(Schedule(child_id=child.id, weekday=4, start_min=16 * 60, end_min=2 * 60, daily_minutes=60))
+        db.add(Schedule(child_id=child.id, weekday=5, start_min=10 * 60, end_min=20 * 60, daily_minutes=180))
+        db.flush()
+
+        state = policy.compute_session(db, child, tick_usage=False)
+        assert state["allow"] is True and state["daily_limit"] == 60
+
+        Clock.current = saturday_morning
+        state = policy.compute_session(db, child, tick_usage=False)
+        assert state == {
+            **state,
+            "allow": True,
+            "reason": "schedule",
+            "daily_limit": 60,
+            "minutes_left_window": 30,
+        }
+        assert db.query(DailyUsage).filter_by(day="2026-10-17").count() == 0
+
+        usage = db.query(DailyUsage).filter_by(day="2026-10-16").one()
+        usage.used_minutes = 60
+        db.flush()
+        assert policy.compute_session(db, child, tick_usage=False)["reason"] == "daily-limit-reached"
+
+        Clock.current = friday_morning
+        denied = policy.compute_session(db, child, tick_usage=False)
+        assert denied["allow"] is False and denied["reason"] == "outside-time"
+
+        Clock.current = saturday_afternoon
+        afternoon = policy.compute_session(db, child, tick_usage=False)
+        assert afternoon["allow"] is True and afternoon["daily_limit"] == 180
+
+        Clock.current = saturday_morning
+        db.add(DayOverride(child_id=child.id, day="2026-10-16", enabled=True))
+        db.flush()
+        assert policy.compute_session(db, child, tick_usage=False)["reason"] == "override-day"
 
 
 def test_quoted_env_unescapes_password():
