@@ -61,6 +61,26 @@ def in_window(start_min: int, end_min: int, now_min: int) -> bool:
     return now_min >= start_min or now_min <= end_min
 
 
+def same_day_window(start_min: int, end_min: int, now_min: int) -> bool:
+    """Minutes of a weekday window that belong to that calendar day.
+
+    An end time after midnight continues into the next calendar day. Those
+    early-morning minutes are the previous weekday's window, not this one's.
+    """
+    if start_min == end_min:
+        return False
+    if start_min < end_min:
+        return start_min <= now_min <= end_min
+    return now_min >= start_min
+
+
+def overnight_tail(start_min: int, end_min: int, now_min: int) -> bool:
+    """True when now is the early-morning continuation of a wrapping window."""
+    if start_min <= end_min:
+        return False
+    return now_min <= end_min
+
+
 def minutes_until_end(start_min: int, end_min: int, now_min: int) -> int:
     if start_min < end_min:
         return max(0, end_min - now_min)
@@ -130,20 +150,41 @@ def compute_session(db: Session, child: Child, *, tick_usage: bool = False) -> d
             }
 
     sched = db.query(Schedule).filter_by(child_id=child.id, weekday=wd).first()
-    if not sched:
-        return {"allow": False, "reason": "no-schedule"}
-
-    start_min = int(sched.start_min)
-    end_min = int(sched.end_min)
-    limit = int(sched.daily_minutes or 0)
-
-    if not in_window(start_min, end_min, mnow):
+    prev = db.query(Schedule).filter_by(child_id=child.id, weekday=(wd - 1) % 7).first()
+    active = None
+    usage_day = now_loc.date()
+    if sched and same_day_window(int(sched.start_min), int(sched.end_min), mnow):
+        active = sched
+    elif prev and overnight_tail(int(prev.start_min), int(prev.end_min), mnow):
+        # 01:30 belongs to yesterday's 18:00–02:00 window, and to yesterday's quota.
+        active = prev
+        usage_day = now_loc.date() - timedelta(days=1)
+        carried = (
+            db.query(DayOverride)
+            .filter_by(child_id=child.id, day=usage_day.isoformat(), enabled=True)
+            .first()
+        )
+        if carried:
+            return {
+                "allow": True,
+                "reason": "override-day",
+                "override_text": "Heute unbegrenzt",
+                "remaining_minutes": None,
+            }
+    if active is None:
+        if not sched:
+            return {"allow": False, "reason": "no-schedule"}
         return {
             "allow": False,
             "reason": "outside-time",
-            "window_start_hm": fmt_hm(start_min),
-            "window_end_hm": fmt_hm(end_min),
+            "window_start_hm": fmt_hm(int(sched.start_min)),
+            "window_end_hm": fmt_hm(int(sched.end_min)),
         }
+
+    start_min = int(active.start_min)
+    end_min = int(active.end_min)
+    limit = int(active.daily_minutes or 0)
+    day = usage_day.isoformat()
 
     if limit <= 0:
         return {
